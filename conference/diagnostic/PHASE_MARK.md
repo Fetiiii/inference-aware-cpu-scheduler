@@ -20,7 +20,9 @@ The compiled historical object proves the following behavior:
 This is diagnostic instrumentation, not application phase input for the C03
 external detector. The marker is used only to label signal samples offline.
 
-The historical diagnostic CMake cache recorded:
+## Historical Intel C01/C02 build record
+
+The historical Intel diagnostic CMake cache recorded:
 
 ```text
 CMAKE_BUILD_TYPE=Release
@@ -31,6 +33,34 @@ GGML_OPENMP_ENABLED=ON
 LLAMA_BUILD_SERVER=ON
 ```
 
-The AMD build helper freezes these options explicitly. `GGML_NATIVE=ON` is
-retained because it was the historical build policy; the AMD collaborator
-must build on the AMD machine rather than copy the Intel-built binary.
+This is the frozen historical C01/C02 build record. It must not be retroactively
+described as a non-native, AVX2-constrained build.
+
+## C03 AMD protocol amendment
+
+The official AMD HX 370 C03 pilot used a separately documented,
+AVX2-constrained diagnostic build:
+
+```text
+CMAKE_BUILD_TYPE=Release
+BUILD_SHARED_LIBS=ON
+GGML_NATIVE=OFF
+GGML_AVX=ON
+GGML_AVX2=ON
+GGML_FMA=ON
+GGML_F16C=ON
+GGML_AVX512=OFF
+GGML_AVX512_VBMI=OFF
+GGML_AVX512_VNNI=OFF
+GGML_AVX512_BF16=OFF
+GGML_OPENMP=ON
+GGML_OPENMP_ENABLED=ON
+LLAMA_BUILD_SERVER=ON
+```
+
+This C03 amendment reduces AMD-only AVX-512 vector-width capability as an
+additional cross-vendor confound. It addresses only one vector-width
+difference; it does not make the Intel and AMD architectures equivalent or
+isolate core topology. The PHASE_MARK instrumentation and semantic boundary
+remain unchanged. The AMD collaborator must build on the AMD machine rather
+than copy the Intel-built binary.

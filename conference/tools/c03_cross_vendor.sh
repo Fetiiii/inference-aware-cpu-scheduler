@@ -19,6 +19,7 @@ Usage:
   ./conference/tools/c03_cross_vendor.sh build-diag
   ./conference/tools/c03_cross_vendor.sh preflight [--model PATH] [--server-bin PATH] [--outdir PATH]
   ./conference/tools/c03_cross_vendor.sh smoke [--outdir PATH]
+  ./conference/tools/c03_cross_vendor.sh pilot [--start-round ROUND] [--outdir PATH]
   ./conference/tools/c03_cross_vendor.sh analyze [--outdir PATH]
 
 Debug inspection only (cannot authorize smoke):
@@ -79,7 +80,15 @@ build_diagnostic() {
     cmake -S "${LLAMA_DIR}" -B "${LLAMA_DIR}/build-diag" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=ON \
-        -DGGML_NATIVE=ON \
+        -DGGML_NATIVE=OFF \
+        -DGGML_AVX=ON \
+        -DGGML_AVX2=ON \
+        -DGGML_FMA=ON \
+        -DGGML_F16C=ON \
+        -DGGML_AVX512=OFF \
+        -DGGML_AVX512_VBMI=OFF \
+        -DGGML_AVX512_VNNI=OFF \
+        -DGGML_AVX512_BF16=OFF \
         -DGGML_OPENMP=ON \
         -DLLAMA_BUILD_SERVER=ON
     cmake --build "${LLAMA_DIR}/build-diag" --target llama-server --parallel "${C03_BUILD_JOBS:-1}"
@@ -127,6 +136,11 @@ while (($#)); do
         --outdir)
             [[ $# -ge 2 ]] || { echo "--outdir requires PATH" >&2; exit 2; }
             OUTDIR=$2
+            shift 2
+            ;;
+        --start-round)
+            [[ $# -ge 2 ]] || { echo "--start-round requires INT" >&2; exit 2; }
+            START_ROUND=$2
             shift 2
             ;;
         --allow-non-hx370)
@@ -187,6 +201,8 @@ case "${COMMAND}" in
         # topology file.
         # shellcheck disable=SC1090
         source "${topology_env}"
+        C03_SERVER_BIN="${C03_SERVER_BIN/<REPO_ROOT>/${REPO_ROOT}}"
+        C03_MODEL="${C03_MODEL/<REPO_ROOT>/${REPO_ROOT}}"
         python3 "${RUNNER}" \
             --path CROSS_VENDOR \
             --big-cpus "${C03_BIG_CPUS}" \
@@ -222,6 +238,56 @@ case "${COMMAND}" in
             exit 2
         fi
         require_commands python3
+        python3 "${ANALYZER}" --input "${OUTDIR}"
+        python3 "${HELPER}" handoff --outdir "${OUTDIR}"
+        ;;
+    pilot)
+        if ((ALLOW_NON_HX370)); then
+            echo "--allow-non-hx370 cannot be used with pilot" >&2
+            exit 2
+        fi
+        if ((MODEL_EXPLICIT || SERVER_EXPLICIT)); then
+            echo "pilot consumes the model and binary frozen by preflight; replacement options are forbidden" >&2
+            exit 2
+        fi
+        require_commands python3 taskset
+        python3 "${HELPER}" verify --outdir "${OUTDIR}"
+        topology_env="${OUTDIR}/preflight/c03_topology.env"
+        if [[ ! -f "${topology_env}" ]]; then
+            echo "Successful preflight configuration missing: ${topology_env}" >&2
+            exit 2
+        fi
+        source "${topology_env}"
+        C03_SERVER_BIN="${C03_SERVER_BIN/<REPO_ROOT>/${REPO_ROOT}}"
+        C03_MODEL="${C03_MODEL/<REPO_ROOT>/${REPO_ROOT}}"
+        python3 "${RUNNER}" \
+            --path CROSS_VENDOR \
+            --big-cpus "${C03_BIG_CPUS}" \
+            --compact-cpus "${C03_COMPACT_CPUS}" \
+            --threads-big "${C03_THREADS_BIG}" \
+            --threads-all "${C03_THREADS_ALL}" \
+            --server-bin "${C03_SERVER_BIN}" \
+            --model "${C03_MODEL}" \
+            --prompt "${REPO_ROOT}/harness/prompt_512.txt" \
+            --rounds 6 \
+            --start-round "${START_ROUND:-3}" \
+            --order-seed 3304 \
+            --detector-mode zero_shot \
+            --interval-ms 20 \
+            --hi 3000 \
+            --lo 2100 \
+            --k 2 \
+            --ctx 2048 \
+            --batch 2048 \
+            --ubatch 512 \
+            --n-predict 256 \
+            --seed 42 \
+            --port 8140 \
+            --initial-cooldown 30 \
+            --cooldown 30 \
+            --outdir "${OUTDIR}" \
+            --resume \
+            --full-pilot-approved
         python3 "${ANALYZER}" --input "${OUTDIR}"
         python3 "${HELPER}" handoff --outdir "${OUTDIR}"
         ;;

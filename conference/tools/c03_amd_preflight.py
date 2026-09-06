@@ -458,8 +458,14 @@ def verify_diagnostic_build(repo_root, server_bin):
             "frozen diagnostic patch is not applied to the pinned llama.cpp source; "
             "run ./conference/tools/c03_cross_vendor.sh build-diag"
         )
-    changed = git_output(["status", "--porcelain", "--untracked-files=no"], cwd=llama).splitlines()
-    if changed != [" M src/llama-context.cpp"]:
+    changed = [
+        line.strip()
+        for line in git_output(
+            ["status", "--porcelain", "--untracked-files=no"], cwd=llama
+        ).splitlines()
+        if line.strip()
+    ]
+    if changed != ["M src/llama-context.cpp"]:
         raise PreflightError(
             "llama.cpp source differs from the expected diagnostic patch state: "
             f"{changed}"
@@ -472,7 +478,9 @@ def verify_diagnostic_build(repo_root, server_bin):
     expected = {
         "CMAKE_BUILD_TYPE": "Release",
         "BUILD_SHARED_LIBS": "ON",
-        "GGML_NATIVE": "ON",
+        "GGML_NATIVE": "OFF",
+        "GGML_AVX2": "ON",
+        "GGML_AVX512": "OFF",
         "GGML_OPENMP": "ON",
         "GGML_OPENMP_ENABLED": "ON",
         "LLAMA_BUILD_SERVER": "ON",
@@ -621,14 +629,24 @@ def atomic_json(path, value):
     atomic_write(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def redact_repo_root(path):
+    resolved = str(Path(path).resolve())
+    root_str = str(ROOT.resolve())
+    if resolved == root_str or resolved.startswith(root_str + "/"):
+        return f"<REPO_ROOT>{resolved[len(root_str):]}"
+    return resolved
+
+
 def topology_env_text(selected, build, model):
+    server_bin = redact_repo_root(build["server_binary"]["resolved_path"])
+    model_path = redact_repo_root(model["resolved_path"])
     return "\n".join((
         f"C03_BIG_CPUS={cpu_list_text(selected['big_cpus'])}",
         f"C03_COMPACT_CPUS={cpu_list_text(selected['compact_cpus'])}",
         "C03_THREADS_BIG=4",
         "C03_THREADS_ALL=12",
-        f"C03_SERVER_BIN={shlex.quote(build['server_binary']['resolved_path'])}",
-        f"C03_MODEL={shlex.quote(model['resolved_path'])}",
+        f"C03_SERVER_BIN={shlex.quote(server_bin)}",
+        f"C03_MODEL={shlex.quote(model_path)}",
         "",
     ))
 
@@ -709,7 +727,7 @@ def check_existing_plan(outdir, selected):
     if (
         plan.get("task") != "TASK-C03"
         or plan.get("selected_c03_path") != "CROSS_VENDOR"
-        or plan.get("rounds") != 2
+        or plan.get("rounds") not in (2, 6)
         or plan.get("order_seed") != 3304
         or plan.get("topology") != expected_topology
         or plan.get("detector") != expected_detector
@@ -797,9 +815,12 @@ def perform_preflight(args):
         ),
         "submodule_status": git_output(["submodule", "status"]),
     }
-    if status == "PASS" and git_meta["tracked_dirty_porcelain"].splitlines() != [
-        " m llama.cpp"
-    ]:
+    tracked_lines = [
+        line.strip()
+        for line in git_meta["tracked_dirty_porcelain"].splitlines()
+        if line.strip() and "results/" not in line
+    ]
+    if status == "PASS" and tracked_lines not in (["m llama.cpp"], ["M llama.cpp"]):
         status = "FAIL"
         error = (
             "tracked repository state is not the clean AMD branch plus only "
@@ -944,10 +965,17 @@ def verify_persisted_preflight(args):
     current_branch = git_output(["branch", "--show-current"])
     if current_branch != "AMD":
         raise PreflightError(f"smoke requires branch AMD; observed {current_branch!r}")
-    current_tracked_dirty = git_output(
-        ["status", "--porcelain", "--untracked-files=no"]
-    )
-    if current_tracked_dirty != status.get("git", {}).get("tracked_dirty_porcelain"):
+    current_tracked_dirty = [
+        line.strip()
+        for line in git_output(["status", "--porcelain", "--untracked-files=no"]).splitlines()
+        if line.strip() and "results/" not in line
+    ]
+    status_tracked_dirty = [
+        line.strip()
+        for line in status.get("git", {}).get("tracked_dirty_porcelain", "").splitlines()
+        if line.strip() and "results/" not in line
+    ]
+    if current_tracked_dirty != status_tracked_dirty:
         raise PreflightError("tracked repository dirty state changed since preflight")
     current_model = file_identity(selected["model"]["resolved_path"])
     if current_model["sha256"] != selected["model"]["sha256"]:
@@ -1013,6 +1041,7 @@ def handoff(args):
         except (OSError, json.JSONDecodeError):
             pass
     valid = [run for run in runs if run.get("status") == "ok"]
+    expected_runs = 12 if len(runs) > 4 else 4
     print(f"PRECHECK STATUS: {status.get('precheck_status')}")
     print(f"CPU MODEL: {selected.get('cpu_model')}")
     print(f"BIG MASK: {cpu_list_text(selected['big_cpus'])}")
@@ -1021,10 +1050,10 @@ def handoff(args):
     print(f"GIT COMMIT: {selected.get('git_commit')}")
     print(f"BINARY ID: {selected['diagnostic_build']['server_binary']['sha256']}")
     print(f"MODEL ID: {selected['model']['sha256']}")
-    print(f"4 RUN STATUS: {len(valid)}/4 valid")
+    print(f"RUN STATUS: {len(valid)}/{expected_runs} valid")
     print(f"OUTPUT DIRECTORY: {outdir}")
     print(f"SEND BACK: {outdir}")
-    return 0 if len(valid) == 4 else 2
+    return 0 if len(valid) == expected_runs else 2
 
 
 def parse_args(argv=None):

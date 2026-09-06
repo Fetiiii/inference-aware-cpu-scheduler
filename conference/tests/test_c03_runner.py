@@ -156,6 +156,23 @@ class C03RunnerTests(unittest.TestCase):
                     "--model", "missing", "--rounds", "6",
                 ])
 
+    def test_six_rounds_accepted_with_approval_flag(self):
+        detector = C03.validate_detector_config("zero_shot", 20, 3000, 2100, 2)
+        args_smoke = SimpleNamespace(
+            path="CROSS_VENDOR", rounds=2, order_seed=3304, detector_config=detector,
+        )
+        args_pilot = SimpleNamespace(
+            path="CROSS_VENDOR", rounds=6, order_seed=3304, detector_config=detector,
+        )
+        specs = C03.arm_specs(self.topology, 2, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            plan_smoke = C03.ensure_plan(tmp, args_smoke, self.topology, specs)
+            self.assertEqual(len(plan_smoke["schedule"]), 4)
+            plan_pilot = C03.ensure_plan(tmp, args_pilot, self.topology, specs)
+            self.assertEqual(len(plan_pilot["schedule"]), 12)
+            self.assertEqual(plan_pilot["schedule"][:4], plan_smoke["schedule"])
+            self.assertEqual(len(C03.schedule_from_round(plan_pilot, 3)), 8)
+
 
 if __name__ == "__main__":
     unittest.main()
