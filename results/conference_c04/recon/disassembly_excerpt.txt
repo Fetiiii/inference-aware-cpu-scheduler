@@ -1,0 +1,83 @@
+C04A COMPILED Q4_K GEMV EVIDENCE
+source binary: <REPO_ROOT>/llama.cpp/build-diag/bin/libggml-cpu.so.0.17.0
+symbol: ggml_gemv_q4_K_8x8_q8_K
+tool: objdump -d -M intel --disassemble=ggml_gemv_q4_K_8x8_q8_K
+note: selected excerpts retain original virtual addresses
+
+SYMBOL ENTRY / VECTOR SETUP
+00000000000de020 <ggml_gemv_q4_K_8x8_q8_K>:
+   de0c8: vmovd       xmm14,eax
+   de0cc: vpbroadcastd ymm14,xmm14
+   de12d: vxorps      xmm6,xmm6,xmm6
+   de13a: vmovaps     ymm7,ymm6
+   de148: vbroadcastss ymm5,DWORD PTR [r13+0x0]
+   de155: vmovdqu     xmm0,XMMWORD PTR [r12-0x480]
+   de16f: vcvtph2ps   ymm9,XMMWORD PTR [r12-0x470]
+   de181: vpshufb     xmm0,xmm0,XMMWORD PTR [rip+0xd5f6]
+   de19c: vcvtph2ps   ymm8,xmm0
+
+Q4 NIBBLE EXTRACTION / UNPACK / SHUFFLE
+   de200: vmovdqu     ymm1,YMMWORD PTR [rax]
+   de20d: vpsrlw      ymm2,ymm0,0x4
+   de247: vpsrlw      ymm7,ymm1,0x4
+   de267: vpand       ymm1,ymm1,ymm14
+   de2e0: vpsrlw      ymm4,ymm10,0x4
+   de2f3: vpunpcklqdq xmm2,xmm2,xmm3
+   de380: vpshufb     xmm4,xmm3,XMMWORD PTR [rip+0xd447]
+   de39c: vpmovzxbw   ymm7,xmm4
+   de3a1: vperm2i128  ymm5,ymm5,ymm5,0x0
+   de3d3: vpunpcklbw  xmm2,xmm2,xmm3
+   de3e2: vpblendd    ymm0,ymm1,ymm0,0xaa
+
+INTEGER DOT-PRODUCT ACCUMULATION
+   de3fb: vpmaddubsw  ymm0,ymm0,ymm6
+   de419: vpmaddubsw  ymm7,ymm7,ymm6
+   de443: vpaddw      ymm0,ymm0,ymm7
+   de458: vpmaddubsw  ymm1,ymm1,ymm5
+   de481: vpaddw      ymm1,ymm1,ymm8
+   de507: vpaddw      ymm0,ymm0,ymm1
+   de51b: vpmaddwd    ymm0,ymm0,ymm11
+   de608: vpmaddwd    ymm5,ymm5,YMMWORD PTR [rsp+0x140]
+   de611: vpmaddwd    ymm1,ymm1,YMMWORD PTR [rsp+0x120]
+   de620: vpaddd      ymm1,ymm1,YMMWORD PTR [rsp+0x260]
+   de629: vpaddd      ymm4,ymm5,ymm0
+
+FLOAT SCALE / FMA / STORE
+   de657: vcvtdq2ps   ymm4,ymm4
+   de65b: vcvtdq2ps   ymm1,ymm1
+   de65f: vmulps      ymm8,ymm5,YMMWORD PTR [rsp+0xe0]
+   de668: vmulps      ymm5,ymm5,YMMWORD PTR [rsp+0xc0]
+   de6a4: vfmadd231ps ymm6,ymm4,ymm8
+   de6a9: vfmadd231ps ymm7,ymm1,ymm5
+   de6e7: vpermps     ymm5,ymm0,ymm5
+   de6ec: vsubps      ymm5,ymm5,ymm6
+   de6f0: vmovups     YMMWORD PTR [rax-0x20],ymm5
+   de72b: vzeroupper
+
+MNEMONIC COUNTS IN THIS SYMBOL (selected)
+  vpshufd       35
+  vpmaddubsw    16
+  vpblendd      16
+  vpand         16
+  vpaddw        14
+  vpsrlw         8
+  vperm2i128     5
+  vpshufb        3
+  vpmovzxbw      3
+  vpmaddwd       3
+  vpaddd         3
+  vfmadd231ps    2
+  vcvtph2ps      2
+  vcvtdq2ps      2
+
+REGISTER-WIDTH OBSERVATION
+  instruction lines referencing XMM: 32
+  instruction lines referencing YMM: 168
+  instruction lines referencing ZMM: 0
+
+INTERPRETATION LIMIT
+  This is direct evidence that the compiled Q4_K GEMV symbol uses 128-bit
+  XMM operations and predominantly 256-bit YMM AVX/AVX2 operations, including
+  integer unpack/shuffle/dot-product work and floating-point FMA. It is not
+  evidence that vector width, instruction decomposition, cache sharing,
+  bandwidth, or synchronization caused the measured Intel decode regression.

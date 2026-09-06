@@ -1,0 +1,101 @@
+C04A STATIC BUILD-FLAG RECORD
+captured: 2026-09-06
+scope: historical Intel C01/C02 build trees
+
+SOURCE
+  llama.cpp revision: 571d0d540df04f25298d0e159e520d9fc62ed121
+  source tree at inspection: clean at pinned revision
+
+TOOLCHAIN
+  CMake cache version: 4.4.0
+  generator: Unix Makefiles
+  make program: /usr/bin/make
+  C compiler: /usr/bin/cc
+  C++ compiler: /usr/bin/c++
+  CMake compiler ID/version: GNU 16.1.1
+  ELF .comment: GCC: (GNU) 16.1.1 20260625
+  linker: /usr/bin/ld, GNU 2.46.1
+
+CMAKE CACHE (BOTH Intel build AND build-diag)
+  CMAKE_BUILD_TYPE=Release
+  BUILD_SHARED_LIBS=ON
+  CMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG
+  CMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG
+  GGML_NATIVE=ON
+  GGML_CPU_REPACK=ON
+  GGML_LLAMAFILE=ON
+  GGML_OPENMP=ON
+  GGML_OPENMP_ENABLED=ON
+  LLAMA_BUILD_SERVER=ON
+
+  GGML_AVX=OFF
+  GGML_AVX2=OFF
+  GGML_AVX512=OFF
+  GGML_AVX512_BF16=OFF
+  GGML_AVX512_VBMI=OFF
+  GGML_AVX512_VNNI=OFF
+  GGML_F16C=OFF
+  GGML_FMA=OFF
+
+INTERPRETATION OF CACHE OPTIONS
+  The standalone AVX/FMA cache options above are not the emitted ISA policy
+  when GGML_NATIVE=ON. The generated CPU command below contains -march=native.
+  The retained object is therefore the authority for instructions actually
+  emitted.
+
+REDACTED GENERATED COMMAND: x86 repack translation unit
+  /usr/bin/c++
+    -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED
+    -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED
+    -DGGML_USE_CPU_REPACK -DGGML_USE_LLAMAFILE -DGGML_USE_OPENMP
+    -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS
+    -I<REPO_ROOT>/llama.cpp/ggml/src/..
+    -I<REPO_ROOT>/llama.cpp/ggml/src/.
+    -I<REPO_ROOT>/llama.cpp/ggml/src/ggml-cpu
+    -I<REPO_ROOT>/llama.cpp/ggml/src/../include
+    -O3 -DNDEBUG -std=gnu++17 -fPIC
+    -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic
+    -Wcast-qual -Wno-unused-function -Wno-array-bounds -Wextra-semi
+    -march=native -fopenmp
+    -o CMakeFiles/ggml-cpu.dir/ggml-cpu/arch/x86/repack.cpp.o
+    -c <REPO_ROOT>/llama.cpp/ggml/src/ggml-cpu/arch/x86/repack.cpp
+
+REDACTED GENERATED COMMAND: ggml CPU executor
+  /usr/bin/cc
+    -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED
+    -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED
+    -DGGML_USE_CPU_REPACK -DGGML_USE_LLAMAFILE -DGGML_USE_OPENMP
+    -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS
+    -I<REPO_ROOT>/llama.cpp/ggml/src/..
+    -I<REPO_ROOT>/llama.cpp/ggml/src/.
+    -I<REPO_ROOT>/llama.cpp/ggml/src/ggml-cpu
+    -I<REPO_ROOT>/llama.cpp/ggml/src/../include
+    -O3 -DNDEBUG -std=gnu11 -fPIC
+    -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes
+    -Werror=implicit-int -Werror=implicit-function-declaration
+    -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function
+    -Wdouble-promotion -march=native -fopenmp
+    -o CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu.c.o
+    -c <REPO_ROOT>/llama.cpp/ggml/src/ggml-cpu/ggml-cpu.c
+
+REDACTED GENERATED COMMAND: diagnostic llama context
+  /usr/bin/c++
+    -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU
+    -DLLAMA_BUILD -DLLAMA_SHARED -Dllama_EXPORTS
+    -I<REPO_ROOT>/llama.cpp/src/.
+    -I<REPO_ROOT>/llama.cpp/src/../include
+    -I<REPO_ROOT>/llama.cpp/ggml/src/../include
+    -O3 -DNDEBUG -fPIC
+    -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic
+    -Wcast-qual -Wno-unused-function -Wno-array-bounds -Wextra-semi
+    -o CMakeFiles/llama.dir/llama-context.cpp.o
+    -c <REPO_ROOT>/llama.cpp/src/llama-context.cpp
+
+NATIVE-TARGET EVIDENCE
+  Build/current host CPU: Intel(R) Core(TM) i7-14650HX
+  /proc/cpuinfo includes: avx avx2 f16c fma avx_vnni
+  /proc/cpuinfo does not expose: avx512*
+  Current GCC read-only resolution: -march=alderlake, -mtune=alderlake
+  Current GCC read-only flags: AVX/AVX2/F16C/FMA enabled; AVX-512 disabled
+  Caveat: the current GCC query is not an independently persisted historical
+  expansion. Actual retained-object disassembly is reported separately.

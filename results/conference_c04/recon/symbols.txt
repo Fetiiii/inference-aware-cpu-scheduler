@@ -1,0 +1,56 @@
+C04A READ-ONLY SYMBOL / BINARY EVIDENCE
+captured: 2026-09-06
+paths: repository-local; absolute user paths redacted
+
+FILE IDENTIFICATION
+  <REPO_ROOT>/llama.cpp/build-diag/bin/llama-server:
+    ELF 64-bit LSB PIE executable, x86-64, dynamically linked
+    GNU/Linux 6.1.0, not stripped
+    BuildID[sha1]=f3482a99ceaa105b9623504c67ed589d6bb176d0
+
+  <REPO_ROOT>/llama.cpp/build-diag/bin/libggml-cpu.so.0.17.0:
+    ELF 64-bit LSB shared object, x86-64, dynamically linked, not stripped
+    BuildID[sha1]=c0941e7f7c9aa3d66b79aadd8c46a3c423915581
+
+HASHES
+  diagnostic llama-server:
+    4178b9d5b4f0d7abe9117d96bb2242d63519e3004f88e7e2ca7a4ce585c8b1bd
+  diagnostic libggml-cpu.so.0.17.0:
+    57ccdee80ec2d9836dd856149a046d5bf354786ed45aafa1d2be82a375a56789
+  normal C01-performance llama-server:
+    4853e2bf4d107565a7f14144d8d828948bd39bb13391ab23bf5d629a573d30af
+  normal C01-performance libggml-cpu.so.0.17.0:
+    07caaac5a1d3719d7bb744a049cc9b811d4ef8bf0f45cddd445ce7221f84ee65
+  x86 repack.cpp.o (identical in normal and diagnostic builds):
+    1e8b20e158421df6084fd06d9ad4bf63ca9b9aa31abaef322177104e13f47069
+  diagnostic llama-context.cpp.o:
+    9d9bd15e5ee3c23152cbdf13ea8c81cdf1241f16e61df4aa8db39f26470c71c4
+
+SELECTED nm -C --defined-only libggml-cpu.so.0.17.0
+  0000000000016b50 T ggml_compute_forward_mul_mat
+  00000000000df630 T ggml_gemm_q4_K_8x8_q8_K
+  00000000000332e0 T ggml_gemm_q4_K_8x8_q8_K_generic
+  00000000000de020 T ggml_gemv_q4_K_8x8_q8_K
+  000000000002ba80 T ggml_gemv_q4_K_8x8_q8_K_generic
+  00000000000d63b0 T ggml_vec_dot_q4_K_q8_K
+  00000000000533b0 T ggml_vec_dot_q4_K_q8_K_generic
+  00000000000d4c40 T quantize_row_q8_K
+  000000000004f7d0 T quantize_row_q8_K_generic
+
+DIAGNOSTIC OBJECT EVIDENCE
+  strings -a llama-context.cpp.o:
+    PHASE_MARK batched=%d t_mono_ns=%lld
+
+  nm -C -a llama-context.cpp.o:
+    0000000000005980 T llama_context::graph_compute(ggml_cgraph*, bool)
+    0000000000000000 d llama_context::graph_compute(...)::first_call
+    0000000000000001 d llama_context::graph_compute(...)::prev_batched
+
+ELF NOTE
+  llama-server reports x86-64-baseline, x86-64-v2, and x86-64-v3 as needed
+  ISA levels. The kernel object's actual vector instructions are recorded in
+  disassembly_excerpt.txt; the ELF note alone is not used to infer them.
+
+COMMAND CLASSES USED
+  file; sha256sum; nm -C; strings; readelf; ldd; cmp
+  All were read-only. No server/model workload was launched.
