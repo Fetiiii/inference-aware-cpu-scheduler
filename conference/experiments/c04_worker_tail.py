@@ -411,9 +411,13 @@ def verify_build_manifest(path, server_bin):
             raise RuntimeError(f"C04 shared-library hash mismatch: {library_path.name}")
     expected_cache = {"CMAKE_BUILD_TYPE": "Release", "BUILD_SHARED_LIBS": "ON",
                       "GGML_NATIVE": "ON", "GGML_OPENMP": "ON",
-                      "GGML_CPU_REPACK": "ON", "GGML_LLAMAFILE": "ON"}
+                      "GGML_CPU_REPACK": "ON", "GGML_LLAMAFILE": "ON",
+                      "LLAMA_BUILD_UI": "OFF", "LLAMA_USE_PREBUILT_UI": "OFF"}
     if any(manifest.get("cmake_cache", {}).get(key) != value for key, value in expected_cache.items()):
         raise RuntimeError("C04 build manifest does not preserve frozen Intel CMake configuration")
+    embedded = binary_record.get("embedded_source_commit", "")
+    if len(embedded) < 7 or not PINNED_LLAMA_COMMIT.startswith(embedded):
+        raise RuntimeError("C04 manifest embedded llama.cpp revision does not match pinned source")
     capabilities = set(manifest.get("capabilities", []))
     if {"PHASE_MARK", "C04_WORKER_TAIL"} - capabilities:
         raise RuntimeError("manifest does not attest PHASE_MARK and C04 trace")

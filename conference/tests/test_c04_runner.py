@@ -158,16 +158,30 @@ def test_manifest_checks_shared_libraries_and_native_configuration(tmp_path):
         "source_commit": c04.PINNED_LLAMA_COMMIT,
         "patch_sha256": {"phase_mark": c04.sha256_file(c04.PHASE_PATCH),
                          "c04_worker_tail": c04.sha256_file(c04.C04_PATCH)},
-        "binary": {"path": str(server), "sha256": c04.sha256_file(server)},
+        "binary": {"path": str(server), "sha256": c04.sha256_file(server),
+                   "embedded_source_commit": c04.PINNED_LLAMA_COMMIT},
         "shared_libraries": [{"path": str(library), "sha256": c04.sha256_file(library)}],
         "cmake_cache": {"CMAKE_BUILD_TYPE": "Release", "BUILD_SHARED_LIBS": "ON",
                         "GGML_NATIVE": "ON", "GGML_OPENMP": "ON",
-                        "GGML_CPU_REPACK": "ON", "GGML_LLAMAFILE": "ON"},
+                        "GGML_CPU_REPACK": "ON", "GGML_LLAMAFILE": "ON",
+                        "LLAMA_BUILD_UI": "OFF", "LLAMA_USE_PREBUILT_UI": "OFF"},
         "capabilities": ["PHASE_MARK", "C04_WORKER_TAIL"],
     }
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
     assert c04.verify_build_manifest(path, server)["source_commit"] == c04.PINNED_LLAMA_COMMIT
+    for key in ("LLAMA_BUILD_UI", "LLAMA_USE_PREBUILT_UI"):
+        manifest["cmake_cache"][key] = "ON"
+        path.write_text(json.dumps(manifest))
+        with pytest.raises(RuntimeError, match="CMake configuration"):
+            c04.verify_build_manifest(path, server)
+        manifest["cmake_cache"][key] = "OFF"
+    manifest["binary"]["embedded_source_commit"] = "70f3bc1"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError, match="embedded llama.cpp"):
+        c04.verify_build_manifest(path, server)
+    manifest["binary"]["embedded_source_commit"] = c04.PINNED_LLAMA_COMMIT
+    path.write_text(json.dumps(manifest))
     library.write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="shared-library"):
         c04.verify_build_manifest(path, server)
@@ -178,6 +192,8 @@ def test_build_helper_and_runner_do_not_change_system_settings():
     assert "GGML_NATIVE=ON" in script
     assert "GGML_CPU_REPACK=ON" in script
     assert "GGML_OPENMP=ON" in script
+    assert "-DLLAMA_BUILD_UI=OFF" in script
+    assert "-DLLAMA_USE_PREBUILT_UI=OFF" in script
     for forbidden in ("sudo ", "sysctl -w", "cpupower frequency-set", "powerprofilesctl set"):
         assert forbidden not in script
 

@@ -53,9 +53,34 @@ were used to choose them.
 ## Build and preflight
 
 ```bash
+C04_WORKER_TAIL_SOURCE_DIR="$PWD/.c04/llama.cpp-worker-tail-noui-src" \
+C04_WORKER_TAIL_BUILD_DIR="$PWD/llama.cpp/build-c04-worker-tail-noui" \
 ./conference/diagnostic/build_c04_worker_tail.sh
-python3 conference/experiments/c04_worker_tail.py --preflight-only
+python3 conference/experiments/c04_worker_tail.py \
+  --server-bin llama.cpp/build-c04-worker-tail-noui/bin/llama-server \
+  --build-manifest llama.cpp/build-c04-worker-tail-noui/c04_build_manifest.json \
+  --preflight-only
 ```
+
+### C04 build-only no-UI amendment
+
+The helper now requires `LLAMA_BUILD_UI=OFF` and
+`LLAMA_USE_PREBUILT_UI=OFF`. This C04-only amendment disables npm provisioning
+and prebuilt UI downloads; it does not describe historical C01/C02 settings.
+No compute/ISA flags, instrumentation, workload or arm settings change.
+
+Preserve the aborted `.c04/llama.cpp-worker-tail-src/`,
+`llama.cpp/build-c04-worker-tail/` and
+`results/conference_c04/build_preflight_2UsmbF2Q/` unchanged. Recovery uses the
+new source/build directories above and never reuses old UI/node_modules data.
+Do not retry if either new target already exists. Any installation/download
+attempt, build or hash failure, or preflight environmental conflict requires
+preserving diagnostics and stopping for review.
+
+Both UI cache values and the embedded llama.cpp `--version` source revision
+are verified in the manifest and preflight. An auxiliary GGML commit may
+identify the enclosing project rather than the archived llama.cpp source; it
+is recorded separately and is not treated as source provenance.
 
 The build helper uses the pinned llama.cpp source and applies the existing
 PHASE_MARK patch before the separate C04 patch. It refuses overwrites and
@@ -83,6 +108,8 @@ After implementation review, run exactly:
 
 ```bash
 python3 conference/experiments/c04_worker_tail.py \
+  --server-bin llama.cpp/build-c04-worker-tail-noui/bin/llama-server \
+  --build-manifest llama.cpp/build-c04-worker-tail-noui/c04_build_manifest.json \
   --rounds 2 \
   --order-seed 4404 \
   --initial-cooldown 30 \

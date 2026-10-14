@@ -28,8 +28,34 @@ barrier, without file I/O or a shared-buffer reservation between them.
 Build with:
 
 ```bash
+C04_WORKER_TAIL_SOURCE_DIR="$PWD/.c04/llama.cpp-worker-tail-noui-src" \
+C04_WORKER_TAIL_BUILD_DIR="$PWD/llama.cpp/build-c04-worker-tail-noui" \
 ./conference/diagnostic/build_c04_worker_tail.sh
 ```
+
+## C04 build-only no-UI amendment
+
+The recovery build explicitly sets `LLAMA_BUILD_UI=OFF` and
+`LLAMA_USE_PREBUILT_UI=OFF` to disable npm-based UI building and prebuilt UI
+downloads. These are new C04 build-only settings, not historical C01/C02
+settings. Native compilation, CPU_REPACK, OpenMP, ISA settings, source/patches,
+workload, worker counts and experimental arms are unchanged. The upstream
+asset target may still perform local embedding work; it must not install npm
+dependencies or download assets.
+
+The aborted `.c04/llama.cpp-worker-tail-src/`,
+`llama.cpp/build-c04-worker-tail/` and
+`results/conference_c04/build_preflight_2UsmbF2Q/` are retained as evidence.
+The clean `*-noui-src` and `*-noui` directories above do not reuse that build's
+UI directory or node_modules. Existing source/build paths still cause an
+abort instead of an overwrite.
+
+The manifest requires both UI cache options to be OFF and validates the
+embedded llama.cpp revision reported by `llama-server --version` against the
+pinned source. This version check does not load a model. The auxiliary GGML
+commit definition is recorded separately: archived source under the project
+may report the parent repository revision in that field. It is not source
+provenance and must not replace the pinned archive or embedded llama identity.
 
 The helper refuses to overwrite its source or build directories. The emitted
 `c04_build_manifest.json` records source/patch hashes, compiler identity,
