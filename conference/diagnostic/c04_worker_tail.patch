@@ -1,0 +1,314 @@
+--- a/ggml/include/ggml-cpu.h
++++ b/ggml/include/ggml-cpu.h
+@@ -68,6 +68,12 @@
+                                        int   n_threads, /* = GGML_DEFAULT_N_THREADS */
+                     struct ggml_threadpool * threadpool /* = NULL */ );
+     GGML_BACKEND_API enum ggml_status  ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan);
++
++    // C04 diagnostic-only, fixed-buffer worker-tail trace controls.
++    GGML_BACKEND_API void ggml_cpu_worker_tail_trace_reset(void);
++    GGML_BACKEND_API void ggml_cpu_worker_tail_trace_begin(uint64_t epoch);
++    GGML_BACKEND_API void ggml_cpu_worker_tail_trace_end(void);
++    GGML_BACKEND_API int  ggml_cpu_worker_tail_trace_dump(const char * path, uint32_t graph_count);
+
+     // same as ggml_graph_compute() but the work data is allocated as a part of the context
+     // note: the drawback of this API is that you must have ensured that the context has enough memory for the work data
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -572,6 +572,142 @@
+
+ static struct ggml_state g_state = {0};
+
++// C04 diagnostic-only worker-tail tracing. The event buffer lives in BSS and
++// is written only while an explicitly armed decode graph is running. The hot
++// path performs no allocation, locking, or file I/O.
++#define C04_WORKER_TAIL_CAPACITY 131072U
++
++struct c04_worker_tail_event {
++    uint64_t epoch;
++    uint64_t t_start_ns;
++    uint64_t t_arrival_ns;
++    uint64_t t_exit_ns;
++    int64_t  ne[4];
++    int64_t  src0_ne[4];
++    int64_t  src1_ne[4];
++    int32_t  node_index;
++    int32_t  worker_index;
++    int32_t  active_workers;
++    int32_t  cpu_start;
++    int32_t  cpu_arrival;
++    int32_t  cpu_exit;
++    int32_t  op;
++    int32_t  src0_type;
++    int32_t  is_q4_k;
++    int32_t  migrated_start_to_arrival;
++};
++
++struct c04_worker_tail_state {
++    atomic_bool          active;
++    atomic_uint          event_count;
++    atomic_uint          dropped_events;
++    atomic_uint_fast64_t epoch;
++    struct c04_worker_tail_event events[C04_WORKER_TAIL_CAPACITY];
++};
++
++static struct c04_worker_tail_state c04_worker_tail = {
++    .active = false,
++    .event_count = 0,
++    .dropped_events = 0,
++    .epoch = 0,
++};
++
++static inline uint64_t c04_worker_tail_now_ns(void) {
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
++}
++
++static inline int32_t c04_worker_tail_cpu(void) {
++#if defined(__gnu_linux__)
++    return (int32_t) sched_getcpu();
++#else
++    return -1;
++#endif
++}
++
++void ggml_cpu_worker_tail_trace_reset(void) {
++    atomic_store_explicit(&c04_worker_tail.active, false, memory_order_release);
++    atomic_store_explicit(&c04_worker_tail.event_count, 0, memory_order_relaxed);
++    atomic_store_explicit(&c04_worker_tail.dropped_events, 0, memory_order_relaxed);
++    atomic_store_explicit(&c04_worker_tail.epoch, 0, memory_order_relaxed);
++}
++
++void ggml_cpu_worker_tail_trace_begin(uint64_t epoch) {
++    atomic_store_explicit(&c04_worker_tail.epoch, epoch, memory_order_relaxed);
++    atomic_store_explicit(&c04_worker_tail.active, true, memory_order_release);
++}
++
++void ggml_cpu_worker_tail_trace_end(void) {
++    atomic_store_explicit(&c04_worker_tail.active, false, memory_order_release);
++}
++
++static struct c04_worker_tail_event * c04_worker_tail_reserve(void) {
++    const unsigned index = atomic_fetch_add_explicit(
++        &c04_worker_tail.event_count, 1, memory_order_relaxed);
++    if (index >= C04_WORKER_TAIL_CAPACITY) {
++        atomic_fetch_add_explicit(
++            &c04_worker_tail.dropped_events, 1, memory_order_relaxed);
++        return NULL;
++    }
++    return &c04_worker_tail.events[index];
++}
++
++int ggml_cpu_worker_tail_trace_dump(const char * path, uint32_t graph_count) {
++    ggml_cpu_worker_tail_trace_end();
++
++    const unsigned claimed = atomic_load_explicit(
++        &c04_worker_tail.event_count, memory_order_relaxed);
++    const unsigned count = claimed < C04_WORKER_TAIL_CAPACITY
++        ? claimed : C04_WORKER_TAIL_CAPACITY;
++    const unsigned dropped = atomic_load_explicit(
++        &c04_worker_tail.dropped_events, memory_order_relaxed);
++
++    FILE * out = fopen(path, "w");
++    if (out == NULL) {
++        return -1;
++    }
++
++    fprintf(out,
++        "{\"record_type\":\"meta\",\"schema_version\":1,"
++        "\"trace_window_graphs\":%u,\"buffer_capacity\":%u,"
++        "\"event_count\":%u,\"dropped_events\":%u}\n",
++        graph_count, C04_WORKER_TAIL_CAPACITY, count, dropped);
++
++    for (unsigned i = 0; i < count; ++i) {
++        const struct c04_worker_tail_event * event = &c04_worker_tail.events[i];
++        const char * op_name = ggml_op_name((enum ggml_op) event->op);
++        const char * src0_name = event->src0_type >= 0
++            ? ggml_type_name((enum ggml_type) event->src0_type) : "none";
++        fprintf(out,
++            "{\"record_type\":\"event\",\"epoch\":%" PRIu64
++            ",\"node_index\":%d,\"worker_index\":%d,"
++            "\"active_workers\":%d,\"t_start_ns\":%" PRIu64
++            ",\"t_arrival_ns\":%" PRIu64 ",\"t_exit_ns\":%" PRIu64
++            ",\"cpu_start\":%d,\"cpu_arrival\":%d,\"cpu_exit\":%d,"
++            "\"op\":\"%s\",\"src0_type\":\"%s\","
++            "\"is_q4_k\":%s,\"migrated_start_to_arrival\":%s,"
++            "\"ne\":[%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 "],"
++            "\"src0_ne\":[%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 "],"
++            "\"src1_ne\":[%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 "]}\n",
++            event->epoch, event->node_index, event->worker_index,
++            event->active_workers, event->t_start_ns, event->t_arrival_ns,
++            event->t_exit_ns, event->cpu_start, event->cpu_arrival,
++            event->cpu_exit, op_name, src0_name,
++            event->is_q4_k ? "true" : "false",
++            event->migrated_start_to_arrival ? "true" : "false",
++            event->ne[0], event->ne[1], event->ne[2], event->ne[3],
++            event->src0_ne[0], event->src0_ne[1], event->src0_ne[2], event->src0_ne[3],
++            event->src1_ne[0], event->src1_ne[1], event->src1_ne[2], event->src1_ne[3]);
++    }
++
++    const int failed = ferror(out);
++    if (fclose(out) != 0 || failed) {
++        return -1;
++    }
++    return dropped == 0 ? 0 : 1;
++}
++
+ void ggml_barrier(struct ggml_threadpool * tp) {
+     int n_threads = atomic_load_explicit(&tp->n_graph, memory_order_relaxed) & GGML_THREADPOOL_N_THREADS_MASK;
+     if (n_threads == 1) {
+@@ -3097,6 +3233,38 @@
+             continue;
+         }
+
++        struct c04_worker_tail_event * stored_event = NULL;
++        const bool c04_trace_node =
++            atomic_load_explicit(&c04_worker_tail.active, memory_order_acquire) &&
++            node->op == GGML_OP_MUL_MAT && node_n + 1 < cgraph->n_nodes;
++        if (c04_trace_node) {
++            stored_event = c04_worker_tail_reserve();
++        }
++        if (stored_event != NULL) {
++            stored_event->epoch = atomic_load_explicit(
++                &c04_worker_tail.epoch, memory_order_relaxed);
++            stored_event->node_index = node_n;
++            stored_event->worker_index = params.ith;
++            stored_event->active_workers = params.nth;
++            stored_event->cpu_start = c04_worker_tail_cpu();
++            stored_event->cpu_arrival = -1;
++            stored_event->cpu_exit = -1;
++            stored_event->op = (int32_t) node->op;
++            stored_event->src0_type = node->src[0]
++                ? (int32_t) node->src[0]->type : -1;
++            stored_event->is_q4_k =
++                stored_event->src0_type == (int32_t) GGML_TYPE_Q4_K;
++            stored_event->migrated_start_to_arrival = 0;
++            for (int dim = 0; dim < 4; ++dim) {
++                stored_event->ne[dim] = node->ne[dim];
++                stored_event->src0_ne[dim] = node->src[0] ? node->src[0]->ne[dim] : 0;
++                stored_event->src1_ne[dim] = node->src[1] ? node->src[1]->ne[dim] : 0;
++            }
++            stored_event->t_start_ns = c04_worker_tail_now_ns();
++            stored_event->t_arrival_ns = 0;
++            stored_event->t_exit_ns = 0;
++        }
++
+         // TODO: move fused-op detection into ggml_graph_plan so fusion decisions are made once at planning time
+         // Try fused ops, fall back to normal compute
+         const int n_fused = ggml_cpu_try_fuse_ops(cgraph, node_n, &params, cplan);
+@@ -3113,7 +3281,17 @@
+         }
+
+         if (node_n + 1 < cgraph->n_nodes) {
++            if (stored_event != NULL) {
++                stored_event->cpu_arrival = c04_worker_tail_cpu();
++                stored_event->migrated_start_to_arrival =
++                    stored_event->cpu_start != stored_event->cpu_arrival;
++                stored_event->t_arrival_ns = c04_worker_tail_now_ns();
++            }
+             ggml_barrier(state->threadpool);
++            if (stored_event != NULL) {
++                stored_event->t_exit_ns = c04_worker_tail_now_ns();
++                stored_event->cpu_exit = c04_worker_tail_cpu();
++            }
+         }
+     }
+
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1,6 +1,7 @@
+ #include "llama-context.h"
+
+ #include "ggml.h"
++#include "ggml-cpu.h"
+ #include "llama-arch.h"
+ #include "llama-graph.h"
+ #include "llama-impl.h"
+@@ -13,12 +14,18 @@
+ #include "llama.h"
+
+ #include <cinttypes>
++#include <cstdio>
++#include <cstdlib>
+ #include <ctime>
+ #include <cmath>
+ #include <cstring>
+ #include <limits>
+ #include <stdexcept>
+ #include <string>
++
++#if defined(__linux__)
++#include <unistd.h>
++#endif
+
+ //
+ // llama_context
+@@ -2455,6 +2462,40 @@
+         first_call = false;
+     }
+
++    // C04 diagnostic-only trace gate. The runner creates the unique arm file
++    // after warmup and immediately before the measured request. The first
++    // subsequent unbatched graph is therefore the first internally marked
++    // decode computation for that request. PHASE_MARK semantics above remain
++    // unchanged, and this gate never alters scheduling or affinity.
++    static constexpr uint32_t c04_trace_window_graphs = 16;
++    static bool c04_trace_armed = false;
++    static bool c04_trace_done = false;
++    static uint32_t c04_decode_graphs = 0;
++    static const char * c04_trace_path = std::getenv("C04_WORKER_TAIL_TRACE_PATH");
++    static const char * c04_arm_path = std::getenv("C04_WORKER_TAIL_ARM_FILE");
++
++#if defined(__linux__)
++    if (!c04_trace_armed && !c04_trace_done && c04_trace_path != nullptr &&
++            c04_arm_path != nullptr && access(c04_arm_path, F_OK) == 0) {
++        if (unlink(c04_arm_path) == 0) {
++            ggml_cpu_worker_tail_trace_reset();
++            c04_trace_armed = true;
++            c04_decode_graphs = 0;
++        } else {
++            fprintf(stderr, "C04_TRACE_ERROR unable_to_consume_arm_file\n");
++            fflush(stderr);
++            c04_trace_done = true;
++        }
++    }
++#endif
++
++    const bool c04_trace_this_graph =
++        c04_trace_armed && !batched &&
++        c04_decode_graphs < c04_trace_window_graphs;
++    if (c04_trace_this_graph) {
++        ggml_cpu_worker_tail_trace_begin((uint64_t) c04_decode_graphs + 1);
++    }
++
+     int n_threads        = batched ? cparams.n_threads_batch : cparams.n_threads;
+     ggml_threadpool_t tp = batched ? threadpool_batch        : threadpool;
+
+@@ -2474,6 +2515,26 @@
+     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
+     if (status != GGML_STATUS_SUCCESS) {
+         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
++    }
++
++    if (c04_trace_this_graph) {
++        ggml_cpu_worker_tail_trace_end();
++        ++c04_decode_graphs;
++        if (c04_decode_graphs == c04_trace_window_graphs) {
++            const int dump_status = ggml_cpu_worker_tail_trace_dump(
++                c04_trace_path, c04_trace_window_graphs);
++            if (dump_status == 0) {
++                fprintf(stderr, "C04_TRACE_DONE graphs=%u path=%s\n",
++                        c04_trace_window_graphs, c04_trace_path);
++            } else {
++                fprintf(stderr,
++                        "C04_TRACE_ERROR dump_status=%d graphs=%u path=%s\n",
++                        dump_status, c04_trace_window_graphs, c04_trace_path);
++            }
++            fflush(stderr);
++            c04_trace_armed = false;
++            c04_trace_done = true;
++        }
+     }
+
+     // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));
