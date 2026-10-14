@@ -314,12 +314,20 @@ def validate_intel_topology():
 
 
 def top_cpu_processes(limit=12):
-    completed = subprocess.run(
+    # Track this exact sampler PID; excluding every process named ps would
+    # hide genuine external CPU load instead of only our self-observation.
+    with subprocess.Popen(
         ["ps", "-eo", "pid=,comm=,%cpu=", "--sort=-%cpu"],
-        check=True, capture_output=True, text=True,
-    )
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    ) as sampler:
+        stdout, stderr = sampler.communicate()
+        if sampler.returncode:
+            raise subprocess.CalledProcessError(
+                sampler.returncode, sampler.args, output=stdout, stderr=stderr,
+            )
+        excluded_pids = {os.getpid(), sampler.pid}
     rows = []
-    for line in completed.stdout.splitlines():
+    for line in stdout.splitlines():
         pieces = line.split(None, 2)
         if len(pieces) != 3:
             continue
@@ -327,7 +335,7 @@ def top_cpu_processes(limit=12):
             pid, command, cpu_pct = int(pieces[0]), pieces[1], float(pieces[2])
         except ValueError:
             continue
-        if pid == os.getpid():
+        if pid in excluded_pids:
             continue
         rows.append({"pid": pid, "comm": command, "cpu_pct": cpu_pct})
         if len(rows) >= limit:

@@ -2,12 +2,69 @@ import json
 import sys
 from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "conference" / "experiments"))
 import c04_worker_tail as c04  # noqa: E402
+
+
+@pytest.fixture
+def mock_ps(monkeypatch):
+    def configure(stdout, returncode=0, stderr=""):
+        process = MagicMock()
+        process.pid = 12346
+        process.args = ["ps", "-eo", "pid=,comm=,%cpu=", "--sort=-%cpu"]
+        process.returncode = returncode
+        process.poll.return_value = returncode
+        process.communicate.return_value = (stdout, stderr)
+        process.__enter__.return_value = process
+        popen = MagicMock(return_value=process)
+        monkeypatch.setattr(c04.subprocess, "Popen", popen)
+        monkeypatch.setattr(c04.os, "getpid", lambda: 12345)
+        return popen
+    return configure
+
+
+def test_process_sampler_excludes_only_own_and_sampler_pids_before_limit(mock_ps):
+    popen = mock_ps("12346 ps 100.0\n12345 python3 90.0\n54321 firefox 2.0\n")
+    rows = c04.top_cpu_processes(limit=1)
+    assert rows == [{"pid": 54321, "comm": "firefox", "cpu_pct": 2.0}]
+    assert c04.interference_warnings(rows) == []
+    popen.assert_called_once_with(
+        ["ps", "-eo", "pid=,comm=,%cpu=", "--sort=-%cpu"],
+        stdout=c04.subprocess.PIPE, stderr=c04.subprocess.PIPE, text=True,
+    )
+
+
+@pytest.mark.parametrize("command,cpu_pct", [
+    ("ps", 100.0), ("gcc", 10.0), ("llama-server", 10.0),
+    ("codex", 10.0), ("unknown-heavy", 75.0),
+])
+def test_sampler_retains_real_cpu_interference(mock_ps, command, cpu_pct):
+    mock_ps(f"12346 ps 100.0\n54321 {command} {cpu_pct}\n")
+    rows = c04.top_cpu_processes()
+    assert rows == [{"pid": 54321, "comm": command, "cpu_pct": cpu_pct}]
+    warnings = c04.interference_warnings(rows)
+    assert len(warnings) == 1
+    assert f"pid=54321 comm={command}" in warnings[0]
+
+
+@pytest.mark.parametrize("command,cpu_pct", [("gcc", 9.9), ("unknown", 74.9)])
+def test_interference_thresholds_unchanged(mock_ps, command, cpu_pct):
+    mock_ps(f"54321 {command} {cpu_pct}\n")
+    assert c04.interference_warnings(c04.top_cpu_processes()) == []
+
+
+def test_sampler_command_failure_is_not_silently_ignored(mock_ps):
+    mock_ps("partial output\n", returncode=1, stderr="ps failed\n")
+    with pytest.raises(c04.subprocess.CalledProcessError) as exc:
+        c04.top_cpu_processes()
+    assert exc.value.returncode == 1
+    assert exc.value.output == "partial output\n"
+    assert exc.value.stderr == "ps failed\n"
 
 
 def event(**overrides):
