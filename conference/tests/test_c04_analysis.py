@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "conference" / "analysis"))
 import c04_analyze as analysis  # noqa: E402
@@ -33,6 +35,8 @@ def test_node_grouping_arrival_wait_q4_and_last_e():
     assert node["is_q4_k"] is True
     assert node["arrival_offset_vs_barrier_wait_r"] < 0
     assert node["complete_worker_set"] is True
+    assert node["e_worker_arrivals"] == 1
+    assert node["expected_e_last_finisher_fraction"] == 0.5
 
 
 def test_migrated_event_exclusion_does_not_fake_complete_node():
@@ -73,6 +77,7 @@ def test_zero_counter_and_zero_correlation_have_defined_summary():
     summary = analysis.describe([0, 0])
     assert summary["mean"] == 0
     assert summary["cv_pct"] is None
+    assert analysis.pearson([1, 1], [2, 3]) is None
 
 
 def write_mock_runs(root, invalid_last=False):
@@ -120,6 +125,13 @@ def test_analysis_round_thermal_and_e_association(tmp_path):
     markdown = (tmp_path / "summary.md").read_text()
     assert "thermal throttle counters changed" in markdown
     assert "migration away and back" in markdown
+    assert "mechanically expected" in markdown
+    assert "not independent causal evidence" in markdown
+    assert "E-core last-finisher enrichment" in markdown
+    entry = summary["node_summary"]["PE_ALLOWED_T8_TB16"]["e_last_finisher"]
+    assert entry["e_last_finisher_enrichment"] == 2.0
+    stable = summary["stable_event_sensitivity"]["per_arm"]["PE_ALLOWED_T8_TB16"]["e_last_finisher"]
+    assert stable == entry
 
 
 def test_invalid_trace_retained_and_explicitly_excluded(tmp_path):
@@ -142,3 +154,96 @@ def test_analysis_detected_corrupt_trace_cannot_remain_in_performance(tmp_path):
     assert len(summary["invalid_runs"]) == 1
     assert summary["instrumented_performance"][run["arm"]]["n"] == 1
     assert json.loads(raw.read_text())["status"] == "ok"
+
+
+def node_rows(index, cpus, last=0, q4=True, migrated=None, tie=False):
+    rows = []
+    for worker, cpu in enumerate(cpus):
+        arrival = 10000 if tie or worker == last else (worker + 1) * 1000
+        item = row(worker, arrival, 11000, cpu, q4=q4, migrated=worker == migrated)
+        item.update(node_index=index, active_workers=len(cpus))
+        rows.append(item)
+    return rows
+
+
+def enrichment(rows, stable=False, q4=False):
+    nodes = analysis.group_nodes(rows, stable_only=stable)
+    key = "q4_k_e_last_finisher" if q4 else "e_last_finisher"
+    return analysis.arm_node_summary(nodes)["PE_ALLOWED_T8_TB16"][key]
+
+
+def test_enrichment_adjusts_for_exposure_and_averages_node_probabilities():
+    workers = (node_rows(1, [0, 2, 4, 16], last=3)
+               + node_rows(2, [0, 16], last=1)
+               + node_rows(3, [0, 2, 4, 6], last=3))
+    summary = enrichment(workers)
+    assert summary["overall_e_worker_arrival_fraction"] == 2 / 10
+    assert summary["e_exposed_node_fraction"] == 2 / 3
+    assert summary["e_exposed_last_finisher_e_fraction"] == 1
+    assert summary["expected_e_last_finisher_fraction"] == 0.375
+    assert summary["e_last_finisher_enrichment"] == pytest.approx(1 / 0.375)
+    assert summary["observed_minus_expected_e_last_finisher_fraction"] == 0.625
+    assert summary["per_node_expected_e_last_finisher_fraction"]["mean"] == 0.25
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_no_exposure_or_empty_subset_has_explicit_na(empty):
+    summary = enrichment([] if empty else node_rows(1, [0, 2], last=1))
+    assert summary["n_e_exposed_nodes"] == 0
+    assert summary["e_last_finisher_enrichment"] is None
+    assert summary["expected_e_last_finisher_fraction"] is None
+    assert summary["e_exposed_last_finisher_e_fraction"] is None
+    assert summary["enrichment_status"] == "NA"
+    assert "e_last_finisher_enrichment" in summary["na_reasons"]
+    assert summary["overall_e_worker_arrival_fraction"] == (None if empty else 0)
+
+
+def test_all_e_nodes_are_not_enriched_merely_because_e_finishes_last():
+    summary = enrichment(node_rows(1, [16, 17], last=1))
+    assert summary["overall_e_worker_arrival_fraction"] == 1
+    assert summary["e_exposed_node_fraction"] == 1
+    assert summary["observed_e_last_finisher_fraction"] == 1
+    assert summary["expected_e_last_finisher_fraction"] == 1
+    assert summary["e_last_finisher_enrichment"] == 1
+
+
+def test_zero_observed_e_last_is_a_valid_zero_enrichment_not_na():
+    summary = enrichment(node_rows(1, [0, 16], last=0))
+    assert summary["expected_e_last_finisher_fraction"] == 0.5
+    assert summary["observed_e_last_finisher_fraction"] == 0
+    assert summary["e_last_finisher_enrichment"] == 0
+    assert summary["enrichment_status"] == "DESCRIPTIVE"
+
+
+def test_q4_k_enrichment_is_distinct_from_other_mul_mat():
+    workers = node_rows(1, [0, 16], last=1) + node_rows(2, [0, 16], last=0, q4=False)
+    assert enrichment(workers)["e_last_finisher_enrichment"] == 1
+    q4 = enrichment(workers, q4=True)
+    assert q4["n_nodes"] == 1
+    assert q4["e_last_finisher_enrichment"] == 2
+
+
+def test_stable_only_enrichment_uses_complete_groups_and_recomputed_baseline():
+    workers = node_rows(1, [0, 16], last=1) + node_rows(2, [0, 16], last=0, migrated=1)
+    assert enrichment(workers)["e_last_finisher_enrichment"] == 1
+    stable = enrichment(workers, stable=True)
+    assert stable["n_nodes"] == 1
+    assert stable["overall_e_worker_arrival_fraction"] == 0.5
+    assert stable["e_last_finisher_enrichment"] == 2
+    assert enrichment(workers, stable=True, q4=True) == stable
+
+
+def test_ties_excluded_from_both_enrichment_sides_with_explicit_counts():
+    workers = node_rows(1, [0, 16], last=1) + node_rows(2, [0, 16], tie=True)
+    summary = enrichment(workers)
+    assert summary["n_e_exposed_nodes"] == 2
+    assert summary["e_exposed_last_finisher_e_fraction"] == 0.5
+    assert summary["n_e_exposed_tied_last_finisher_nodes"] == 1
+    assert summary["n_enrichment_nodes"] == 1
+    assert summary["observed_e_last_finisher_fraction"] == 1
+    assert summary["expected_e_last_finisher_fraction"] == 0.5
+    assert summary["e_last_finisher_enrichment"] == 2
+    all_tied = enrichment(node_rows(2, [0, 16], tie=True))
+    assert all_tied["n_enrichment_nodes"] == 0
+    assert all_tied["e_last_finisher_enrichment"] is None
+    assert all_tied["enrichment_status"] == "NA"

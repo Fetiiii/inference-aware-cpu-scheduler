@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """TASK-C04B bounded Intel worker-tail diagnostic runner.
 
-This runner executes exactly two randomized rounds of P8_ONLY and
+This runner executes exactly two counterbalanced rounds of P8_ONLY and
 PE_ALLOWED_T8_TB16.  It never changes scheduler, governor, EPP, turbo, or
 other system settings.  C04 instrumentation is armed only after warmup and
 records a fixed 16-graph unbatched decode window in the diagnostic runtime.
@@ -41,6 +41,7 @@ P_CPUS = tuple(bl.P_CORES_NOSMT)
 E_CPUS = tuple(bl.E_CORES)
 SMOKE_ROUNDS = 2
 ORDER_SEED = 4404
+SCHEDULE_DESIGN = "counterbalanced_two_rounds_v1"
 TRACE_WINDOW_GRAPHS = 16
 TRACE_CAPACITY = 131072
 PINNED_LLAMA_COMMIT = "571d0d540df04f25298d0e159e520d9fc62ed121"
@@ -52,7 +53,8 @@ MARK_RE = re.compile(r"PHASE_MARK batched=(\d+) t_mono_ns=(\d+)")
 
 CSV_FIELDS = (
     "round", "sequence_index", "global_sequence_index", "arm",
-    "randomized_order_seed", "timestamp", "status", "thermal_status",
+    "randomized_order_seed", "schedule_design", "round_order_source",
+    "timestamp", "status", "thermal_status",
     "threads", "threads_batch", "cpu_mask", "trace_window_graphs",
     "trace_event_count", "trace_dropped_events", "ttft_ms",
     "itl_p50_ms", "itl_p95_ms", "itl_p99_ms", "decode_tps", "n_tokens",
@@ -112,10 +114,10 @@ def build_schedule(rounds=SMOKE_ROUNDS, order_seed=ORDER_SEED):
         raise ValueError(f"C04B order seed is frozen at {ORDER_SEED}")
     schedule = []
     global_index = 0
+    first_order = list(ARMS)
+    random.Random(order_seed).shuffle(first_order)
     for round_number in range(1, rounds + 1):
-        round_seed = order_seed + round_number
-        order = list(ARMS)
-        random.Random(round_seed).shuffle(order)
+        order = first_order if round_number == 1 else list(reversed(first_order))
         for sequence_index, arm in enumerate(order, 1):
             global_index += 1
             schedule.append({
@@ -123,7 +125,9 @@ def build_schedule(rounds=SMOKE_ROUNDS, order_seed=ORDER_SEED):
                 "sequence_index": sequence_index,
                 "global_sequence_index": global_index,
                 "arm": arm,
-                "randomized_order_seed": round_seed,
+                "randomized_order_seed": order_seed,
+                "schedule_design": SCHEDULE_DESIGN,
+                "round_order_source": "seeded_shuffle" if round_number == 1 else "reverse_round_1",
             })
     return schedule
 
@@ -437,6 +441,7 @@ def ensure_plan(outdir, specs):
         "rounds": SMOKE_ROUNDS,
         "run_count": SMOKE_ROUNDS * len(ARMS),
         "order_seed": ORDER_SEED,
+        "schedule_design": SCHEDULE_DESIGN,
         "trace_window_graphs": TRACE_WINDOW_GRAPHS,
         "trace_capacity": TRACE_CAPACITY,
         "model_sha256": MODEL_SHA256,
@@ -702,6 +707,7 @@ def environment_record(args, topology, manifest, plan, preflight_state):
             "rounds": SMOKE_ROUNDS,
             "run_count": 4,
             "order_seed": ORDER_SEED,
+            "schedule_design": SCHEDULE_DESIGN,
             "trace_window_graphs": TRACE_WINDOW_GRAPHS,
             "fresh_server_per_run": True,
             "initial_cooldown_s": args.initial_cooldown,

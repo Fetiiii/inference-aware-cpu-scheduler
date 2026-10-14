@@ -11,7 +11,7 @@ This diagnostic does not test vector width and does not establish causality.
   `16,17,18,19,20,21,22,23`; no P SMT siblings.
 - `P8_ONLY`: mask P8, `-t 8 -tb 8`.
 - `PE_ALLOWED_T8_TB16`: mask P8+E8, `-t 8 -tb 16`.
-- Two randomized rounds, each arm once, order-seed family rooted at `4404`.
+- Two counterbalanced rounds, each arm once; first-round shuffle seed `4404`.
 - Same Qwen3.5-9B-Q4_K_M model and prompt; ctx/batch/ubatch
   `2048/2048/512`, 256 predicted tokens, generation seed 42,
   `cache_prompt=false`.
@@ -25,12 +25,30 @@ Both arms execute the identical fixed-buffer instrumentation path. Actual
 CPUs are sampled at node start, barrier arrival, and barrier exit. Worker
 identity is never used as a substitute for CPU class. Instrumented latency
 metrics are diagnostic sanity checks, not primary paper performance results.
-The order family uses `Random(4404 + round)` separately in each round.
-Both rounds happen to order `PE_ALLOWED_T8_TB16` then `P8_ONLY` for this seed;
-the randomized design is not counterbalanced.
+The first round uses `Random(4404).shuffle()`; round 2 reverses that order.
+The resulting schedule is `P8_ONLY -> PE_ALLOWED_T8_TB16` in round 1 and
+`PE_ALLOWED_T8_TB16 -> P8_ONLY` in round 2. Each arm therefore occupies each
+position once. The plan, run JSON/CSV and environment metadata record
+`schedule_design=counterbalanced_two_rounds_v1`, seed `4404` for both rounds,
+and `round_order_source=seeded_shuffle` or `reverse_round_1`. Round 2 has no
+independent random draw.
 The model and prompt hashes are checked against the frozen Intel records;
 `--model` and `--prompt` may relocate those same inputs, not substitute another
 model or workload.
+
+## Pre-measurement protocol correction
+
+Before the first C04B build or measured run, the reviewed implementation
+`1833fec` was corrected to replace its independent per-round shuffles with
+the deterministic counterbalanced schedule above. The original seed family
+put both arms in the same order in both rounds. This correction changes only
+ordering and descriptive analysis; arms, workload, pinned source, trace window
+and buffer design are unchanged. An existing plan from the previous ordering
+is incompatible and is rejected without overwriting it.
+
+The analysis also adds participation-adjusted E last-finisher enrichment.
+These definitions are frozen before measurement; no C04B measured values
+were used to choose them.
 
 ## Build and preflight
 
@@ -79,6 +97,37 @@ The analyzer includes round-level observations and a separately labeled
 thermal-warning-excluded sensitivity view. It makes no automatic causal or
 outcome declaration.
 
+## E last-finisher enrichment
+
+For every complete node, the analyzer records E arrivals, total worker
+arrivals, and `expected_e_last_finisher_fraction = E arrivals / all arrivals`
+in `node_summary.csv`. This is a participation-only descriptive baseline,
+not an assertion that workers truly have identical finishing probabilities.
+
+Per arm, both for all selected MUL_MAT nodes and for Q4_K-backed nodes, it
+reports overall E-worker arrival fraction, fraction of nodes exposed to at
+least one E arrival, and fraction of E-exposed nodes with a uniquely E last
+finisher. Observed and expected fractions used for enrichment are computed on
+the same E-exposed nodes with a unique last finisher:
+
+```text
+observed = E-last nodes / E-exposed unique-last nodes
+expected = mean(per-node E arrivals / all arrivals) over those same nodes
+enrichment = observed / expected
+```
+
+The expected baseline is an unweighted mean of per-node probabilities, not a
+pooled event ratio or a mean of per-node enrichment ratios. Tied-last nodes
+remain in exposure counts but are excluded from both sides of enrichment;
+their counts are explicit. Zero or unavailable denominators produce JSON
+`null` and an NA explanation, rendered as `NA` in the Markdown enrichment
+tables. Enrichment is not clipped and is not a significance or causal test.
+
+The same comparisons are repeated after removing migrated events, using only
+remaining complete worker groups and recomputing the baseline on that subset.
+Remaining node counts and NA reasons are reported, including when no complete
+stable-only groups remain.
+
 Then analyze descriptively:
 
 ```bash
@@ -107,3 +156,10 @@ scheduler delay and the barrier implementation. A synchronous trace dump
 after graph 16 can inflate one instrumented inter-token interval. Raw token
 timestamps are retained so that effect is visible. These sanity measurements
 must not replace the frozen C01/C02 performance results.
+
+Negative arrival-offset versus barrier-wait correlation is mechanically
+expected at a synchronization barrier: earlier arrivals have more time to wait
+for a common release (`wait = exit - arrival`). It is not independent causal
+evidence for an E-core mechanism. E participation, last-finisher enrichment,
+arrival spread, migration and thermal sensitivity still require joint
+checkpoint interpretation.

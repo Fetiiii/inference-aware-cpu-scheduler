@@ -31,9 +31,31 @@ def test_frozen_arms_and_schedule():
     assert len(schedule) == 4
     for round_number in (1, 2):
         assert {row["arm"] for row in schedule if row["round"] == round_number} == set(c04.ARMS)
+    assert [row["arm"] for row in schedule] == [
+        "P8_ONLY", "PE_ALLOWED_T8_TB16", "PE_ALLOWED_T8_TB16", "P8_ONLY"]
+    assert [row["global_sequence_index"] for row in schedule] == [1, 2, 3, 4]
+    assert all(row["randomized_order_seed"] == 4404 for row in schedule)
+    assert all(row["schedule_design"] == "counterbalanced_two_rounds_v1" for row in schedule)
+    assert [row["round_order_source"] for row in schedule] == [
+        "seeded_shuffle", "seeded_shuffle", "reverse_round_1", "reverse_round_1"]
+    for arm in c04.ARMS:
+        assert sorted(row["sequence_index"] for row in schedule if row["arm"] == arm) == [1, 2]
     assert schedule == c04.build_schedule()
     with pytest.raises(ValueError):
         c04.build_schedule(rounds=6)
+
+
+def test_counterbalanced_plan_records_design_and_rejects_previous_protocol(tmp_path):
+    plan = c04.ensure_plan(tmp_path, c04.arm_specs())
+    assert plan["schedule_design"] == "counterbalanced_two_rounds_v1"
+    assert plan["schedule"] == c04.build_schedule()
+    old_plan = {**plan, "schedule_design": "independent_per_round_shuffle"}
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(old_plan))
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match="incompatible"):
+        c04.ensure_plan(tmp_path, c04.arm_specs())
+    assert path.read_bytes() == before
 
 
 def test_actual_cpu_class_and_migration():

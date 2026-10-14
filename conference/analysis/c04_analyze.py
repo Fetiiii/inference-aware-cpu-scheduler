@@ -69,6 +69,8 @@ def group_nodes(workers, stable_only=False):
             "run_id": rows[0]["run_id"], "round": rows[0]["round"], "arm": rows[0]["arm"],
             "epoch": rows[0]["epoch"], "node_index": rows[0]["node_index"],
             "active_workers": rows[0]["active_workers"], "observed_workers": len(rows),
+            "e_worker_arrivals": len(e_arrivals),
+            "expected_e_last_finisher_fraction": len(e_arrivals) / len(rows),
             "complete_worker_set": (len(rows) == rows[0]["active_workers"] and
                                     {row["worker_index"] for row in rows} == set(range(rows[0]["active_workers"]))),
             "op": rows[0]["op"], "src0_type": rows[0]["src0_type"],
@@ -117,6 +119,57 @@ def load(root):
     return runs, workers, warnings
 
 
+def e_last_finisher_summary(nodes):
+    """Participation-adjusted descriptive baseline, without causal inference.
+
+    Every input node is a complete group. Enrichment uses the same E-exposed,
+    unique-last node set for observed and expected fractions; ties are counted
+    explicitly and excluded from both sides of that comparison.
+    """
+    na_reasons = {}
+
+    def fraction(numerator, denominator, key):
+        if denominator is None or denominator == 0:
+            na_reasons[key] = "NA: denominator is zero or unavailable"
+            return None
+        return numerator / denominator
+
+    exposed = [node for node in nodes if node["e_worker_arrivals"] > 0]
+    comparable = [node for node in exposed if node["last_finisher_cpu_class"] != "TIE"]
+    e_last = sum(node["last_finisher_cpu_class"] == "E" for node in exposed)
+    observed = fraction(e_last, len(comparable), "observed_e_last_finisher_fraction")
+    expected = (statistics.fmean(node["expected_e_last_finisher_fraction"] for node in comparable)
+                if comparable else None)
+    if expected is None:
+        na_reasons["expected_e_last_finisher_fraction"] = "NA: no E-exposed nodes with a unique last finisher"
+    enrichment = fraction(observed, expected, "e_last_finisher_enrichment")
+    output = {
+        "n_nodes": len(nodes),
+        "n_worker_arrivals": sum(node["observed_workers"] for node in nodes),
+        "n_e_worker_arrivals": sum(node["e_worker_arrivals"] for node in nodes),
+        "n_e_exposed_nodes": len(exposed),
+        "n_e_last_finisher_nodes": e_last,
+        "n_tied_last_finisher_nodes": sum(node["last_finisher_cpu_class"] == "TIE" for node in nodes),
+        "n_e_exposed_tied_last_finisher_nodes": len(exposed) - len(comparable),
+        "n_enrichment_nodes": len(comparable),
+        "overall_e_worker_arrival_fraction": fraction(
+            sum(node["e_worker_arrivals"] for node in nodes),
+            sum(node["observed_workers"] for node in nodes),
+            "overall_e_worker_arrival_fraction"),
+        "e_exposed_node_fraction": fraction(len(exposed), len(nodes), "e_exposed_node_fraction"),
+        "e_exposed_last_finisher_e_fraction": fraction(e_last, len(exposed), "e_exposed_last_finisher_e_fraction"),
+        "per_node_expected_e_last_finisher_fraction": describe(node["expected_e_last_finisher_fraction"] for node in nodes),
+        "observed_e_last_finisher_fraction": observed,
+        "expected_e_last_finisher_fraction": expected,
+        "e_last_finisher_enrichment": enrichment,
+        "observed_minus_expected_e_last_finisher_fraction": observed - expected if observed is not None and expected is not None else None,
+        "enrichment_status": "NA" if enrichment is None else "DESCRIPTIVE",
+        "na_reasons": na_reasons,
+        "method": "Expected probability per node = E arrivals / all worker arrivals. Enrichment = observed / mean expected on the same E-exposed, unique-last nodes; ties excluded from both. No significance or causal inference.",
+    }
+    return output
+
+
 def arm_node_summary(nodes):
     output = {}
     for arm in c04.ARMS:
@@ -124,6 +177,8 @@ def arm_node_summary(nodes):
         q4 = [node for node in selected if node["is_q4_k"]]
         output[arm] = {
             "n_nodes": len(selected), "n_q4_k_nodes": len(q4),
+            "e_last_finisher": e_last_finisher_summary(selected),
+            "q4_k_e_last_finisher": e_last_finisher_summary(q4),
             "arrival_span_us": describe(node["arrival_span_us"] for node in selected),
             "q4_k_arrival_span_us": describe(node["arrival_span_us"] for node in q4),
             "barrier_wait_us": describe(node["mean_barrier_wait_us"] for node in selected),
@@ -192,7 +247,7 @@ def markdown(summary):
         "## Six bounded questions", "",
         f"1. PE_ALLOWED minus P8_ONLY mean arrival span: **{summary['questions']['q1_arrival_span_delta_us']} us**.",
         f"2. PE_ALLOWED last-arriving-on-E fraction: **{summary['questions']['q2_last_e_fraction']}**; all worker arrivals on E: **{summary['questions']['q2_all_arrivals_e_fraction']}**.",
-        f"3. PE_ALLOWED arrival-offset/barrier-wait correlation: **{summary['questions']['q3_arrival_vs_wait_r']}**. Negative values mean earlier arrivals waited longer.",
+        f"3. PE_ALLOWED arrival-offset/barrier-wait correlation: **{summary['questions']['q3_arrival_vs_wait_r']}**. Negative correlation is mechanically expected at a synchronization barrier: earlier arrivals have longer to wait for the same release. This is not independent causal evidence.",
         f"4. Q4_K PE-minus-P mean arrival-span difference: **{summary['questions']['q4_q4_k_arrival_span_delta_us']} us**.",
         f"5. Instrumented PE-minus-P decode direction: ITL p95 **{summary['questions']['q5_itl_p95_delta_ms']} ms**, throughput **{summary['questions']['q5_decode_tps_delta']} tok/s**.",
         f"6. Excluding migrated events, complete-node PE-minus-P arrival span: **{summary['questions']['q6_stable_only_arrival_span_delta_us']} us**.", "",
@@ -201,6 +256,25 @@ def markdown(summary):
     lines.extend(f"- {warning}" for warning in summary["warnings"])
     if not summary["warnings"]:
         lines.append("- None recorded.")
+    lines += ["", "## E-core last-finisher enrichment", "",
+              "All fractions use complete node groups. The table distinguishes all worker arrivals, E-exposed nodes, and the matched E-exposed/unique-last subset used for enrichment. Per-node expected probabilities and participation counts are retained in node_summary.csv. NA denotes a zero/unavailable denominator; summary.json records the reason.", "",
+              "Tied-last nodes are included in the exposure fraction but are not counted as a uniquely E last finisher. They are excluded from both observed and expected enrichment denominators and counted separately.", ""]
+    for title, summaries in (("All valid complete nodes", ns),
+                             ("Stable workers only; complete groups", summary["stable_event_sensitivity"]["per_arm"])):
+        lines += [f"### {title}", "",
+                  "| Arm / nodes | n | E arrival fraction | E-exposed fraction | E-last / E-exposed | Matched n | Observed E-last | Expected E-last | Enrichment | E-exposed ties |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for arm in c04.ARMS:
+            for subset, key in (("all MUL_MAT", "e_last_finisher"), ("Q4_K", "q4_k_e_last_finisher")):
+                entry = summaries[arm][key]
+                values = [entry[field] for field in (
+                    "n_nodes", "overall_e_worker_arrival_fraction", "e_exposed_node_fraction",
+                    "e_exposed_last_finisher_e_fraction", "n_enrichment_nodes",
+                    "observed_e_last_finisher_fraction", "expected_e_last_finisher_fraction",
+                    "e_last_finisher_enrichment", "n_e_exposed_tied_last_finisher_nodes")]
+                formatted = ["NA" if value is None else f"{value:.4f}" if isinstance(value, float) else str(value) for value in values]
+                lines.append(f"| {arm} / {subset} | " + " | ".join(formatted) + " |")
+        lines.append("")
     lines += ["", "## Instrumented sanity metrics and thermal state", "", "```json",
               json.dumps(summary["instrumented_performance"], indent=2), "```", "",
               "## Per-arm node summary", "", "```json", json.dumps(ns, indent=2), "```", "",
@@ -258,11 +332,17 @@ def analyze(root):
             "q1_arrival_span_delta_us": delta(node_summary, "arrival_span_us"),
             "q2_last_e_fraction": node_summary["PE_ALLOWED_T8_TB16"]["last_finisher_e_fraction"],
             "q2_all_arrivals_e_fraction": worker_summary["PE_ALLOWED_T8_TB16"]["arrival_e_fraction"],
+            "q2_e_exposed_node_fraction": node_summary["PE_ALLOWED_T8_TB16"]["e_last_finisher"]["e_exposed_node_fraction"],
+            "q2_e_exposed_last_finisher_e_fraction": node_summary["PE_ALLOWED_T8_TB16"]["e_last_finisher"]["e_exposed_last_finisher_e_fraction"],
+            "q2_expected_e_last_finisher_fraction": node_summary["PE_ALLOWED_T8_TB16"]["e_last_finisher"]["expected_e_last_finisher_fraction"],
+            "q2_e_last_finisher_enrichment": node_summary["PE_ALLOWED_T8_TB16"]["e_last_finisher"]["e_last_finisher_enrichment"],
             "q3_arrival_vs_wait_r": node_summary["PE_ALLOWED_T8_TB16"]["arrival_vs_wait_r"],
             "q4_q4_k_arrival_span_delta_us": delta(node_summary, "q4_k_arrival_span_us"),
+            "q4_q4_k_e_last_finisher_enrichment": node_summary["PE_ALLOWED_T8_TB16"]["q4_k_e_last_finisher"]["e_last_finisher_enrichment"],
             "q5_itl_p95_delta_ms": delta(perf, "itl_p95_ms"),
             "q5_decode_tps_delta": delta(perf, "decode_tps"),
             "q6_stable_only_arrival_span_delta_us": delta(stable_summary, "arrival_span_us"),
+            "q6_stable_only_e_last_finisher_enrichment": stable_summary["PE_ALLOWED_T8_TB16"]["e_last_finisher"]["e_last_finisher_enrichment"],
         },
         "thermal_warning_runs": thermal, "warnings": warnings,
         "invalid_runs": [c04.run_stem(run) for run in runs if run.get("status") != "ok"],
