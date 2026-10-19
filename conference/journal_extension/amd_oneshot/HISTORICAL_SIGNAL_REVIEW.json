@@ -1,0 +1,287 @@
+{
+  "archive": {
+    "member_count": 84,
+    "regular_member_count": 73,
+    "sha256": "02bbc0f878667fb71f3cbf07b3367c648e152889ff27c3047050fd831744ab07",
+    "uncompressed_bytes": 5146164,
+    "unsafe_member_names_or_symlinks": [],
+    "zip_crc_check_bad_member": null
+  },
+  "arm_signal_summaries": {
+    "ALL_CORES": {
+      "post_request_medians": {
+        "max": 0,
+        "mean": 0,
+        "median": 0,
+        "min": 0,
+        "n": 6,
+        "p05": 0,
+        "p95": 0
+      },
+      "post_sample_values": {
+        "max": 59.25925925925925,
+        "mean": 4.809087793031514,
+        "median": 0,
+        "min": 0,
+        "n": 6206,
+        "p05": 0,
+        "p95": 17.24137931034483
+      },
+      "post_to_pre_sample_median_ratio": 0,
+      "post_zero_fraction": 0.5717048018047052,
+      "pre_request_medians": {
+        "max": 30.434782608695652,
+        "mean": 18.33695652173913,
+        "median": 16.666666666666668,
+        "min": 8.514492753623188,
+        "n": 6,
+        "p05": 10.38586956521739,
+        "p95": 28.26086956521739
+      },
+      "pre_sample_values": {
+        "max": 400,
+        "mean": 28.967167210562465,
+        "median": 16.666666666666668,
+        "min": 0,
+        "n": 2513,
+        "p05": 0,
+        "p95": 100
+      },
+      "pre_zero_fraction": 0.32988460007958614,
+      "request_count_with_both_sides": 6,
+      "request_mean_direction_counts": {
+        "falling": 6,
+        "flat": 0,
+        "rising": 0
+      },
+      "request_mean_post_minus_pre": {
+        "max": -17.371973840155984,
+        "mean": -23.867880425444422,
+        "median": -18.53748963717581,
+        "min": -44.4533205783072,
+        "n": 6,
+        "p05": -39.93193226464776,
+        "p95": -17.513790764162554
+      },
+      "request_median_post_minus_pre": {
+        "max": -8.514492753623188,
+        "mean": -18.33695652173913,
+        "median": -16.666666666666668,
+        "min": -30.434782608695652,
+        "n": 6,
+        "p05": -28.26086956521739,
+        "p95": -10.38586956521739
+      }
+    },
+    "BIG_ONLY": {
+      "post_request_medians": {
+        "max": 0,
+        "mean": 0,
+        "median": 0,
+        "min": 0,
+        "n": 6,
+        "p05": 0,
+        "p95": 0
+      },
+      "post_sample_values": {
+        "max": 112.5,
+        "mean": 12.413883775231566,
+        "median": 0,
+        "min": 0,
+        "n": 7746,
+        "p05": 0,
+        "p95": 50
+      },
+      "post_to_pre_sample_median_ratio": null,
+      "post_zero_fraction": 0.6312935708752905,
+      "pre_request_medians": {
+        "max": 0,
+        "mean": 0,
+        "median": 0,
+        "min": 0,
+        "n": 6,
+        "p05": 0,
+        "p95": 0
+      },
+      "pre_sample_values": {
+        "max": 500,
+        "mean": 6.255679943137105,
+        "median": 0,
+        "min": 0,
+        "n": 4377,
+        "p05": 0,
+        "p95": 37.5
+      },
+      "pre_zero_fraction": 0.746401644962303,
+      "request_count_with_both_sides": 6,
+      "request_mean_direction_counts": {
+        "falling": 0,
+        "flat": 0,
+        "rising": 6
+      },
+      "request_mean_post_minus_pre": {
+        "max": 6.789701309426866,
+        "mean": 6.165164700649353,
+        "median": 6.229300781623749,
+        "min": 5.176630686141557,
+        "n": 6,
+        "p05": 5.333445012457315,
+        "p95": 6.782817645489051
+      },
+      "request_median_post_minus_pre": {
+        "max": 0,
+        "mean": 0,
+        "median": 0,
+        "min": 0,
+        "n": 6,
+        "p05": 0,
+        "p95": 0
+      }
+    }
+  },
+  "historical_all_allowed4_present": false,
+  "historical_arm_thread_counts": {
+    "ALL_CORES": [
+      12
+    ],
+    "BIG_ONLY": [
+      4
+    ]
+  },
+  "historical_arms": [
+    "ALL_CORES",
+    "BIG_ONLY"
+  ],
+  "phase_labeling": {
+    "audit_edge_exclusion_ms": 200,
+    "ground_truth": "PHASE_MARK / t_internal_phase_ns, first internal unbatched decode computation; offline labels only",
+    "marker_used_by_detector_all_false": true,
+    "signal_field": "norm_ctx_per_cpu_s",
+    "source": "conference/analysis/c03_analyze.py:96-123",
+    "window": "request send through last token; PREFILL is before marker, DECODE after marker"
+  },
+  "timing_summaries_ms_by_arm": {
+    "ALL_CORES": {
+      "internal_boundary_to_last_token_ms": {
+        "max": 24958.640619,
+        "mean": 24469.92590983333,
+        "median": 24440.1538565,
+        "min": 24029.384975,
+        "n": 6,
+        "p05": 24101.62895425,
+        "p95": 24877.195779250003
+      },
+      "request_to_first_token_ms": {
+        "max": 9647.406796,
+        "mean": 9035.452124333333,
+        "median": 8946.065987,
+        "min": 8731.606216,
+        "n": 6,
+        "p05": 8764.013934,
+        "p95": 9505.637765
+      },
+      "request_to_internal_boundary_ms": {
+        "max": 9646.670586,
+        "mean": 9035.838325166666,
+        "median": 8946.697498,
+        "min": 8732.113597,
+        "n": 6,
+        "p05": 8764.522122499999,
+        "p95": 9505.27870775
+      },
+      "request_total_ms": {
+        "max": 33820.388318,
+        "mean": 33505.764235,
+        "median": 33561.4267365,
+        "min": 33050.474489,
+        "n": 6,
+        "p05": 33129.059259,
+        "p95": 33784.30512875
+      }
+    },
+    "BIG_ONLY": {
+      "internal_boundary_to_last_token_ms": {
+        "max": 28498.291086,
+        "mean": 27246.802761166666,
+        "median": 27046.492913000002,
+        "min": 26684.32613,
+        "n": 6,
+        "p05": 26755.223894000002,
+        "p95": 28183.04239925
+      },
+      "request_to_first_token_ms": {
+        "max": 15980.404678,
+        "mean": 15437.754642,
+        "median": 15346.599078,
+        "min": 15172.981956,
+        "n": 6,
+        "p05": 15184.975505,
+        "p95": 15875.050236000001
+      },
+      "request_to_internal_boundary_ms": {
+        "max": 15981.215039,
+        "mean": 15438.326248166668,
+        "median": 15347.0983345,
+        "min": 15173.541696,
+        "n": 6,
+        "p05": 15185.530805,
+        "p95": 15875.7877675
+      },
+      "request_total_ms": {
+        "max": 44479.506125,
+        "mean": 42685.12900933333,
+        "median": 42467.765818,
+        "min": 41857.867826,
+        "n": 6,
+        "p05": 41940.754699,
+        "p95": 44021.7428815
+      }
+    }
+  },
+  "warmup_server_reported_ms": {
+    "eval": {
+      "max": 0,
+      "mean": 0,
+      "median": 0,
+      "min": 0,
+      "n": 12,
+      "p05": 0,
+      "p95": 0
+    },
+    "limitation": "No per-run launch-to-monitor-armed/warmup wall-duration field is archived; server task-0 timing is model-reported only.",
+    "listening_count": 12,
+    "model_loaded_count": 12,
+    "prompt_eval": {
+      "max": 243.17,
+      "mean": 167.72666666666666,
+      "median": 167.815,
+      "min": 118.89,
+      "n": 12,
+      "p05": 131.9855,
+      "p95": 220.67499999999998
+    },
+    "runs_with_warmup_total": 12,
+    "settle_sleep_s_from_source": 1,
+    "total": {
+      "max": 243.17,
+      "mean": 167.72833333333332,
+      "median": 167.815,
+      "min": 118.89,
+      "n": 12,
+      "p05": 131.9855,
+      "p95": 220.67499999999998
+    }
+  },
+  "scope": "Descriptive historical raw review, not new inference or new measurements; +/-200ms excluded; original frozen summary values unchanged. Historical data motivated v2 but is not independent calibration or held-out evidence.",
+  "reported_frozen_summary_means": {
+    "BIG_ONLY": {
+      "prefill": 6.308,
+      "decode": 12.426
+    },
+    "ALL_CORES": {
+      "prefill": 28.977,
+      "decode": 4.817
+    }
+  },
+  "timing_limit": "Request-only historical data excludes fresh-server readiness/loading and does not time COMPACT4 or ALL_ALLOWED4."
+}

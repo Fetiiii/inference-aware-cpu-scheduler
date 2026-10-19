@@ -20,3 +20,17 @@ __pycache__/
 /results/**/*.passes
 /results/**/*.load
 /results/**/*.serverlog
+
+# JE AMD delivery: private authorization and one-session outputs are never public.
+/.je_amd_authorization/
+/results/journal_extension_amd_*/
+/results/journal_extension_amd_*_private_*.zip
+/results/journal_extension_amd_*_private_*.zip.sha256
+/results/.je_amd_runtime_*/
+/private_history/
+/AMD_JE_ONESESSION_APPROVED_PRIVATE.zip
+/AMD_JE_ONESESSION_APPROVED_PRIVATE.zip.sha256
+/AMD_journal_extension_oneshot_PREP*.zip
+/AMD_journal_extension_oneshot_PREP*.zip.sha256
+/execution_approval.json
+/execution_approval.template.json

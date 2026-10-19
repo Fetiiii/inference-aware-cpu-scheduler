@@ -1,0 +1,41 @@
+{
+  "schema": "je-amd-prep-r-historical-recovery-v1",
+  "archive_sha256": "02bbc0f878667fb71f3cbf07b3367c648e152889ff27c3047050fd831744ab07",
+  "crc_verified": true,
+  "zip_members": 84,
+  "uncompressed_bytes": 5146164,
+  "role_reference_counts": {
+    "detector": 12,
+    "environment": 12,
+    "phase": 12,
+    "run": 12,
+    "server": 12
+  },
+  "unique_files_by_role": {
+    "detector": 12,
+    "environment": 2,
+    "phase": 12,
+    "run": 12,
+    "server": 12
+  },
+  "missing_artifacts": [],
+  "historical_identity_gate": "PASS",
+  "role_completeness_gate": "PASS",
+  "identities": [
+    {
+      "environment_member": "history/c03_00/raw/environment/env_20260827T142308Z.json",
+      "model_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+      "prompt_sha256": "27f3f8ba7b73d3df1337549237a8e9f4ccf57e0551908cc93ce8a183480751b8",
+      "source_commit": "571d0d540df04f25298d0e159e520d9fc62ed121",
+      "server_sha256": "a3d96e1df84b2c56a2c04f8253040fe4c88241c8193640128ff3b539d3cc11e1"
+    },
+    {
+      "environment_member": "history/c03_00/raw/environment/env_20260903T213650Z.json",
+      "model_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+      "prompt_sha256": "27f3f8ba7b73d3df1337549237a8e9f4ccf57e0551908cc93ce8a183480751b8",
+      "source_commit": "571d0d540df04f25298d0e159e520d9fc62ed121",
+      "server_sha256": "a3d96e1df84b2c56a2c04f8253040fe4c88241c8193640128ff3b539d3cc11e1"
+    }
+  ],
+  "scope": "Original ZIP and extracted contents unchanged; raw private evidence remains outside the public source tree. Current target runtime/machine preflight NOT RUN."
+}

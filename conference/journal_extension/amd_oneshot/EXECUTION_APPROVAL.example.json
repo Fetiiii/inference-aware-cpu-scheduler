@@ -1,0 +1,14 @@
+{
+  "schema": "je-amd-git-approval-v1",
+  "authorized": false,
+  "runtime_fallback_authorized": false,
+  "author_review_id": "REQUIRES_SEPARATE_AUTHOR_APPROVAL_BEFORE_DEPLOYMENT",
+  "plan_sha256": "fill with reviewed canonical plan hash",
+  "git_commit": "fill with exact reviewed 40-character commit",
+  "source_sha256": "fill with reviewed tracked-source SHA256",
+  "required_files_sha256": "fill with reviewed required tracked-file manifest digest",
+  "maximum_session_s": 10800,
+  "duration_rule_sha256": "fill with reviewed exact rule hash",
+  "schedule_sha256": {"FULL": "fill with FULL72 schedule hash", "STATIC_SIGNAL": "fill with STATIC_SIGNAL48 schedule hash"},
+  "runtime_fallback_policy_sha256": "fill with reviewed fallback policy hash even if fallback permission is false"
+}

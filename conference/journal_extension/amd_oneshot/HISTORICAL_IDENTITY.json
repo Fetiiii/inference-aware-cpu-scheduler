@@ -1,0 +1,66 @@
+{
+  "author_offline_verification": {
+    "archive_members": 84,
+    "archive_sha256": "02bbc0f878667fb71f3cbf07b3367c648e152889ff27c3047050fd831744ab07",
+    "arms": [
+      "BIG_ONLY",
+      "ALL_CORES"
+    ],
+    "crc_verified": true,
+    "rounds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "run_roles_verified": [
+      "run",
+      "detector",
+      "phase",
+      "server",
+      "environment"
+    ],
+    "unique_environment_records": 2,
+    "valid_runs": 12
+  },
+  "collaborator_raw_verification": "NOT_CHECKED",
+  "diagnostic_build": {
+    "compiler_identity": {
+      "capture": "Normalized historical first version line; not current compiler evidence.",
+      "returncode": 0,
+      "stdout": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0"
+    },
+    "llama_cpp_commit": "571d0d540df04f25298d0e159e520d9fc62ed121",
+    "patch_sha256": "722adc5c8d8805d442753971d2eabd488ab91906aa8fa93961d6a615194833ce",
+    "phase_mark_capability": {
+      "format": "PHASE_MARK batched=%d t_mono_ns=%lld",
+      "matched_file_identities": [
+        {
+          "sha256": "8fdf5c06a445b11dc2a2d9e4dafb94668198cd15a8e31eeeeed9be545719b97e"
+        }
+      ],
+      "supported": true
+    },
+    "server_binary": {
+      "sha256": "a3d96e1df84b2c56a2c04f8253040fe4c88241c8193640128ff3b539d3cc11e1"
+    }
+  },
+  "model_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "private_raw_bundled": false,
+  "prompt_sha256": "27f3f8ba7b73d3df1337549237a8e9f4ccf57e0551908cc93ce8a183480751b8",
+  "schema": "je-amd-public-historical-identity-v1",
+  "source_revision": "571d0d540df04f25298d0e159e520d9fc62ed121",
+  "status": "AUTHOR_SIDE_VERIFIED_IDENTITY",
+  "verification_scope": "Author offline verified original private C03 archive; private raw NOT BUNDLED and NOT CHECKED on collaborator.",
+  "workload": {
+    "batch": 2048,
+    "cooldown_s": 30,
+    "ctx": 2048,
+    "initial_cooldown_s": 30,
+    "n_predict": 256,
+    "seed": 42,
+    "ubatch": 512
+  }
+}
