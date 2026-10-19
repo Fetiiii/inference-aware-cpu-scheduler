@@ -2,6 +2,7 @@
 import argparse
 import fcntl
 import signal
+import shlex
 from pathlib import Path
 import sys
 import time
@@ -20,11 +21,22 @@ def review_template(plan=None, package_hash=None):
             'review_notice': 'UNSIGNED / NOT AUTHORIZED. Author must review both schedules, the exact duration rule and optional fallback policy before deployment. No in-session methodological choices.'}
 
 
-def final_archive(session):
-    target = session.parent / f'{session.name}_private_{time.time_ns()}.zip'
+def final_archive(session, kind='preflight'):
+    target = archive.private_archive_path(session, kind, str(time.time_ns()))
     report = archive.archive_session(session, target)
-    print(f'PRIVATE ARCHIVE: {target}\nSHA256: {report["sha256"]}')
+    if report['status'] != 'PASS':
+        print(f'ARCHIVE VERIFICATION FAILED: {target}')
+        raise RuntimeError('Private archive failed integrity verification; preserve diagnostics')
+    label = {'preflight': 'PREFLIGHT-ONLY ARCHIVE', 'recovery': 'MANUAL RECOVERY ARCHIVE',
+             'run_failed': 'FAILED RUN/PREPARATION ARCHIVE'}[kind]
+    print(f'{label}: {target}\nSHA256: {report["sha256"]}')
+    print_delivery_command(target, session)
     return report
+
+
+def print_delivery_command(target, session):
+    launcher = distribution.CODE_ROOT / distribution.PACKAGE / 'amd_oneshot.sh'
+    print('VERIFY BEFORE DELIVERY: ' + shlex.join(['bash', str(launcher), 'verify', str(target), '--session', str(session)]))
 
 
 def checked_session(path):
@@ -55,6 +67,7 @@ def parser():
     pk.add_argument('--session', type=Path, default=distribution.CODE_ROOT / 'results/journal_extension_amd_01')
     validate = sub.add_parser('verify', help='Verify private result ZIP CRC and included SHA256.')
     validate.add_argument('archive', type=Path)
+    validate.add_argument('--session', type=Path, help='Required before delivery: verify this exact ZIP against final local session state, not merely CRC/SHA.')
     prep = sub.add_parser('prepare-bundle', help='Create PRIVATE portable source + verified historical-evidence ZIP; no execution.')
     prep.add_argument('--output', type=Path, required=True)
     prep.add_argument('--historical-zip', type=Path, required=True)
@@ -178,7 +191,7 @@ def authorize_run(args, session):
             raise ValueError('Historical runtime unavailable; fallback was not separately author-approved')
         return plan, config, approval, report
     except BaseException:
-        final_archive(session)
+        final_archive(session, kind='run_failed')
         raise
 
 
@@ -303,7 +316,7 @@ def do_run(args):
             except BaseException as exc:
                 save_json(session / f'runtime_preparation_failure_{time.time_ns()}.json',
                           {'error_type': type(exc).__name__, 'message': str(exc)})
-                final_archive(session)
+                final_archive(session, kind='run_failed')
                 raise
         # Coordinator independently reacquires and revalidates frozen inputs.
         from .coordinator import execute_session
@@ -311,7 +324,18 @@ def do_run(args):
     finally:
         signal.signal(signal.SIGTERM, previous)
     print(f'SESSION: {result}')
-    return 0 if result.get('status') == 'COMPLETE' else 2
+    final = result.get('final_archive') or {}
+    if final.get('status') == 'PASS':
+        with (session / '.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            delivery = archive.verify_delivery(Path(final['archive']), session)
+        print(f'FINAL RUN ARCHIVE: {final["archive"]}\nFINAL RUN STATUS: {result["status"]}')
+        print(f'FINAL SNAPSHOT VERIFICATION: {delivery["status"]}; completed requests={delivery.get("completed_requests", "UNKNOWN")}; measured requests={delivery.get("measured_requests", "UNKNOWN")}')
+        print_delivery_command(Path(final['archive']), session)
+        if delivery['status'] != 'PASS':
+            print('DO NOT SEND: archive does not match final session state: ' + delivery.get('error', 'verification failed'))
+            return 2
+    return 0 if result.get('status') == 'COMPLETE' and final.get('status') == 'PASS' else 2
 
 
 def main(argv=None):
@@ -335,10 +359,19 @@ def main(argv=None):
             # Share the same session lock as execution; do not zip changing files.
             with (session / '.lock').open('a') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                final_archive(session)
+                final_archive(session, kind='recovery')
             return 0
         if args.command == 'verify':
-            report = archive.validate_archive(args.archive)
+            if args.session is not None:
+                session = checked_session(args.session)
+                if not session.is_dir():
+                    raise ValueError('Final local session directory missing; no delivery-state verification')
+                with (session / '.lock').open('a') as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    report = archive.verify_delivery(args.archive, session)
+            else:
+                report = {**archive.validate_archive(args.archive), 'verification_scope': 'integrity_only',
+                          'delivery_ready': False}
             print(report)
             return 0 if report['status'] == 'PASS' else 2
         if args.command == 'prepare-bundle':

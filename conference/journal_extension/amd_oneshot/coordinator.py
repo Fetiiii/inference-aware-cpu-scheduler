@@ -539,7 +539,7 @@ def execute_session(session_dir, deps=None):
             except Exception as exc:
                 append_event(session, 'analysis_failed', error=str(exc))
                 result['status'] = 'STOPPED'
-            target = session.parent / (session.name + '_' + segment + '.zip')
+            target = archive.private_archive_path(session, 'run_complete' if result['status'] == 'COMPLETE' else 'run_stopped', segment)
             archive_start = clock()
             try:
                 verified = archive_builder(session, target)

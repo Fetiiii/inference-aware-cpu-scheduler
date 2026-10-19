@@ -26,6 +26,9 @@ __pycache__/
 /results/journal_extension_amd_*/
 /results/journal_extension_amd_*_private_*.zip
 /results/journal_extension_amd_*_private_*.zip.sha256
+# Include legacy coordinator _<segment>.zip names, scoped to JE only.
+/results/journal_extension_amd_*.zip
+/results/journal_extension_amd_*.zip.sha256
 /results/.je_amd_runtime_*/
 /private_history/
 /AMD_JE_ONESESSION_APPROVED_PRIVATE.zip

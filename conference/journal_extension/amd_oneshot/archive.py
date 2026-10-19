@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import stat
 import zipfile
@@ -299,3 +300,110 @@ def validate_archive(path: Path, expected_sha256: str | None = None) -> dict:
         return {'status': 'PASS', 'archive': str(path), 'sha256': digest, 'external_archive_hash_checked': external_checked, 'files': len(refs), 'excluded': manifest['excluded']}
     except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, zipfile.BadZipFile, UnicodeError, RuntimeError, zlib.error, EOFError) as exc:
         return {'status': 'FAIL', 'archive': str(path), 'error': str(exc)}
+
+
+PRIVATE_ARCHIVE_KINDS = ('preflight', 'run_complete', 'run_stopped', 'run_failed', 'recovery')
+
+
+def private_archive_path(session, kind, unique_id):
+    """One private namespace for every producer, with an explicit purpose tag."""
+    session = Path(session)
+    if kind not in PRIVATE_ARCHIVE_KINDS or not re.fullmatch(r'[A-Za-z0-9_-]+', str(unique_id)):
+        raise ValueError('Invalid private archive purpose or unique identifier')
+    return session.parent / f'{session.name}_private_{kind}_{unique_id}.zip'
+
+
+def verify_delivery(path, session):
+    """Read-only delivery check against the FINAL local session snapshot.
+
+    Caller holds the session lock. Ignore ONLY archive_elapsed ledger entries:
+    the coordinator appends its own archival cost after closing its ZIP. All
+    scientific, failure and completion events and eligible file contents must
+    still match. This does not rerun analysis or modify any source evidence.
+    """
+    report = validate_archive(path)
+    if report['status'] != 'PASS':
+        return report
+    path, root = Path(path).absolute(), Path(session).absolute()
+    try:
+        if root.is_symlink() or root.resolve() != root or not root.is_dir():
+            raise ValueError('Unsafe or missing session directory')
+        kinds = [kind for kind in PRIVATE_ARCHIVE_KINDS
+                 if path.name.startswith(f'{root.name}_private_{kind}_')]
+        if path.parent != root.parent or len(kinds) != 1:
+            raise ValueError('Archive is not a recognized private output for this session')
+        kind = kinds[0]
+        with zipfile.ZipFile(path) as z:
+            manifest = json.loads(z.read('ARCHIVE_MANIFEST.json'))
+            # Lock creation is coordination bookkeeping, not session evidence.
+            if any(entry['path'] == '.lock' and entry['bytes'] != 0 for entry in manifest['files']):
+                raise ValueError('Nonempty archived coordination lock is not ignorable evidence')
+            entries = {entry['path']: entry for entry in manifest['files'] if entry['path'] != '.lock'}
+            current = {}
+            for file in _walk(root):
+                if file.relative_to(root).as_posix() == '.lock':
+                    if file.stat().st_size != 0:
+                        raise ValueError('Nonempty current coordination lock is not ignorable evidence')
+                    continue
+                if file.suffix.lower() in DISALLOWED_SUFFIXES or _binary_signature(file):
+                    continue
+                current[file.relative_to(root).as_posix()] = _stream_identity(file)[0]
+            if set(current) != set(entries):
+                raise ValueError('Archive is not the final session file census; do not send an earlier snapshot')
+            for name, identity in current.items():
+                if name == 'audit_ledger.jsonl':
+                    continue
+                if any(identity[key] != entries[name][key] for key in ('sha256', 'bytes')):
+                    raise ValueError('Archive is not the final session content: ' + name)
+            def events(data):
+                return [event for line in data.splitlines() if line.strip()
+                        and (event := json.loads(line)).get('kind') != 'archive_elapsed']
+            ledger_path = root / 'audit_ledger.jsonl'
+            live = events(ledger_path.read_bytes()) if ledger_path.exists() else []
+            saved = events(z.read('audit_ledger.jsonl')) if 'audit_ledger.jsonl' in entries else []
+            if live != saved:
+                raise ValueError('Archive ledger is stale; final completions/stops differ')
+            completed, measured = [], 0
+            for event in saved:
+                if event.get('kind') in ('request_completed', 'attempt_failed'):
+                    attempt = event['attempt_id']
+                    if Path(attempt).name != attempt or attempt in ('.', '..'):
+                        raise ValueError('Invalid attempt reference in final ledger')
+                    for name, checksum in event['raw_sha256'].items():
+                        if checksum is None:
+                            continue  # Empty directory entries are not ZIP files.
+                        if not _safe_name(name):
+                            raise ValueError('Unsafe raw evidence reference')
+                        member = 'attempts/' + attempt + '/' + name
+                        if entries.get(member, {}).get('sha256') != checksum:
+                            raise ValueError('Missing or mismatched raw attempt evidence')
+                if event.get('kind') != 'request_completed':
+                    continue
+                record = event['record']
+                if not _safe_name(record) or entries.get(record, {}).get('sha256') != event['record_sha256']:
+                    raise ValueError('Missing or mismatched completed measured-run record')
+                value = json.loads(z.read(record))
+                if value.get('run_id') != event['run_id'] or value.get('status') != 'ok':
+                    raise ValueError('Completed run record disagrees with final ledger')
+                completed.append(event['run_id'])
+                measured += value.get('cohort') != 'technical_smoke'
+            if len(completed) != len(set(completed)):
+                raise ValueError('Duplicate completed-run references')
+            ends = [i for i, e in enumerate(saved) if e.get('kind') == 'session_end']
+            if ends:
+                last = ends[-1]
+                state = saved[last]['status']
+                if any(e.get('kind') in ('terminal_stop', 'session_stopped', 'analysis_failed') for e in saved[last + 1:]):
+                    state = 'STOPPED'
+            else:
+                state = 'STOPPED' if saved else 'PREFLIGHT_ONLY'
+            if kind == 'preflight' and (saved or completed):
+                raise ValueError('Preflight-only archive is not experimental result delivery')
+            if kind == 'run_complete' and state != 'COMPLETE':
+                raise ValueError('Completed-run archive does not describe a completed session')
+        return {**report, 'verification_scope': 'final_session_snapshot', 'archive_kind': kind,
+                'session_state': state, 'completed_requests': len(completed),
+                'measured_requests': measured, 'delivery_ready': True}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError,
+            zipfile.BadZipFile, UnicodeError, zlib.error, EOFError) as exc:
+        return {**report, 'status': 'FAIL', 'delivery_ready': False, 'error': str(exc)}

@@ -86,7 +86,24 @@ sonrası yalnız sürelerden FULL72, STATIC_SIGNAL48 veya STOP dondurulur.600s
 arşiv rezervi ve300s güvenlik payı tahmine dahildir; süre garantisi değildir.
 Bilimsel kapı başarısızsa politika atlanır; kötü/negatif/no-trigger sonuç gizlenmez.
 
-## 5. Hata/iptal ve geri gönderim
+## 5. Son arşivi seçme, hata/iptal ve geri gönderim
+
+Tüm özel çıktılar `results/journal_extension_amd_01_private_<tür>_<benzersiz-id>.zip`
+adını kullanır; türler farklı durumları belirtir:
+
+| Çıktı | Anlamı / teslim seçimi |
+|---|---|
+| `preflight` — `PREFLIGHT-ONLY ARCHIVE` | Yalnız hazırlık snapshot'ı; sonraki deney sonuçları değildir. |
+| `run_complete` — `FINAL RUN ARCHIVE` | Tamamlanan deney oturumunun sonuçları; run'ın döndürdüğü TAM yolu kullanın. |
+| `run_stopped` veya `run_failed` | Duran/başarısız deney veya hazırlık; mevcut tam/kısmi kanıt korunur, başarılı deney diye sunulmaz. |
+| `recovery` — `MANUAL RECOVERY ARCHIVE` | `package` komutunun mevcut oturumdan ürettiği yeni kurtarma snapshot'ı. |
+
+**Dosya adı glob'u, sıralama veya yalnız ZIP'in CRC/hash PASS olmasıyla seçim
+yapmayın.** Birden fazla geçerli ZIP olabilir. `run` sonunda yazılan
+`FINAL RUN ARCHIVE:` satırındaki kesin dosya deney tesliminin adayıdır; yanındaki
+`FINAL RUN STATUS` COMPLETE veya STOPPED durumunu belirtir. Run başlamadan hata
+olursa `FAILED RUN/PREPARATION ARCHIVE` yolu yalnız tanı teslimidir. Preflight
+arşivini daha sonraki ölçümlerin yerine göndermeyin.
 
 Ctrl-C güvenli duruş ister; aktif istek/derleme kesilirse otomatik tekrar yoktur.
 Dosya silmeyin, onay/plan değiştirmeyin, yeni oturum açıp kötü koşuyu değiştirmeyin.
@@ -94,15 +111,32 @@ Araç başarısızlığı da arşivler. Güç kesintisi/SIGKILL sonrası yalnız
 
 ```bash
 bash conference/journal_extension/amd_oneshot/amd_oneshot.sh package
-bash conference/journal_extension/amd_oneshot/amd_oneshot.sh verify results/journal_extension_amd_01_private_TIMESTAMP.zip
 ```
 
-`TIMESTAMP` yerine ekranda verilen gerçek dosya adını kullanın. Gönderilecek dosya
-**son PASS doğrulanmış** `results/journal_extension_amd_01_private_*.zip` dosyasıdır;
-ekrandaki SHA256'yı da iletin. Eski preflight ara arşivlerini ayrıca göndermeniz
-gerekmez. Model/build ürünleri arşive girmez. Yeni ham izler/ortam kayıtları özel
-kalmalıdır; public GitHub'a yüklemeyin. C03 eski raw dosyaları burada varmış gibi
-işaretlenmez; tarihsel karşılaştırmayı yazarlar kendi özel arşivlerinde yapar.
+Manuel kurtarmada bu komutun `MANUAL RECOVERY ARCHIVE:` satırındaki TAM yolu
+kullanın. Araç her üretimde **o kesin dosyaya ait** `VERIFY BEFORE DELIVERY:`
+komutunu yazdırır. Göndermeden önce bu komutu aynen çalıştırın; biçimi:
+
+```bash
+bash conference/journal_extension/amd_oneshot/amd_oneshot.sh verify "TAM_ARSIV_YOLU.zip" --session results/journal_extension_amd_01
+```
+
+`TAM_ARSIV_YOLU.zip` bir örnek yer tutucudur; `FINAL RUN ARCHIVE` veya manuel
+kurtarma satırındaki gerçek TAM yolu kullanın. `--session` kontrolü zorunludur:
+CRC/SHA, dosya envanteri, son ledger durumu ve her tamamlanan isteğin record/raw
+referanslarını doğrular. Deney çalıştıysa tamamlanan ölçüm kayıtları ZIP'te olmalı;
+`completed_requests` smoke dahil, `measured_requests` smoke hariç sayıdır.
+Yalnız archive_elapsed ve boş koordinasyon lock'u bilimsel snapshot karşılaştırmasına
+dahil edilmez; tamamlanma/durma olayları veya yeni kayıtlar göz ardı edilmez.
+Eski preflight veya sonradan değişmiş snapshot FAIL olur. `verify` tek başına,
+`--session` olmadan yalnız bütünlük denetimidir ve teslim hazırlığı kanıtı değildir.
+
+**Yalnız final yerel oturumla eşleşen PASS arşivini** ve onun ekrandaki SHA256'sını
+gönderin. Son doğrulamadan sonra oturumda devam/değişiklik olduysa yeniden
+`package` üretip onun kesin yolunu doğrulayın. Eski ara arşivleri silmeniz veya
+ayrıca göndermeniz gerekmez. Model/build ürünleri arşive girmez. Yeni ham izler ve
+ortam kayıtları özel kalmalıdır; public GitHub'a yüklemeyin. Tarihsel C03
+karşılaştırmasını yazarlar kendi özel arşivlerinde yapar.
 
 ## Yazar için onay modeli
 
@@ -113,3 +147,5 @@ false şablon üretir. Şablon exact commit + gerekli tracked dosya SHA listesi/
 sonrası yazar aynı commit'e özel yeni onay verir. JSON kriptografik imzalı değildir;
 güvenilir yazar iletişimi ve hash doğrulaması gerekir. Public tracked dosyalarda
 gerçek yürütme izni/secret bulunmaz. Bu dağıtım görevi otomatik izin üretmez.
+Paketleme düzeltmesi de yeni commit/kaynak hash'i üretir; eski onay dosyası
+taşınmaz veya otomatik yükseltilmez. Yeni incelenmiş commit'e yeni onay gerekir.
