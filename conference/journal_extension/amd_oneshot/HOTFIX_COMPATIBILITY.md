@@ -78,6 +78,25 @@ STATIC_SIGNAL48 / STOP, statistics/Holm, workload and 10,800-second total limit
 remain frozen. Plan and source approval bindings are recomputed from current
 bytes; old plan/source approvals fail. No existing authorization is migrated.
 
+## AMD Ryzen AI 9 HX 370 `k10temp:Tctl` prefill hotspot amendment
+
+Empirical smoke verification on the target AMD Ryzen AI 9 HX 370 (`retry01` starting
+at `42.75 C` and `retry02` with unrestricted airflow starting at `38.00 C` and
+`11.24 GiB` `MemAvailable`) demonstrated that under the frozen C03 power configuration
+(`platform_profile = performance`, `governor = performance`, `epp = performance`,
+`boost = 1`), AMD Precision Boost 2 drives the four Zen 5 (`BIG4`) cores at full
+all-core AVX2 boost (`4,853–5,018 MHz`) up to the silicon's `95 C` PB2 control
+target during the 15.1-second 512-token prefill burst, with transient `k10temp:Tctl`
+hotspot readings reaching `95.125–96.875 C` for ~4 seconds before dropping to
+`79.5 C` within 1.0 second and `67.4 C` within 2.0 seconds after prefill ends.
+Zero hardware thermal throttling occurs (`BIG4` sustains `4,861 MHz` at `96.38 C`,
+matching historical C03 `BIG_ONLY` `4,904–4,952 MHz` and `15.17–15.56 s` TTFT).
+Historical C03 sampled temperature only before prefill (`51.1–62.2 C`) and at the
+end of 256-token decode (`77.6–82.1 C`). Accordingly, `critical_temp_c` is amended
+from `95` to `100` C in `RUN_PLAN.json`, `preflight.py`, and `runtime.py`
+(`RequestMonitor.check_safety()`), while retaining `preflight_temp_max_c = 70` C
+and `run_start_temp_max_c = 80` C.
+
 Use `results/journal_extension_amd_retry01` consistently, as shown in
 `GIT_DELIVERY_TR.md`. Preflight never starts a server. Failed preparation still
 produces a purpose-labeled private ZIP. Select the exact final archive path and

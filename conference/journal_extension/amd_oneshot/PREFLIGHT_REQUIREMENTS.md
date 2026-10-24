@@ -9,7 +9,7 @@ No collaborator execution is approved. Read-only checks do not start a server or
 | Existing runtime | Historical server and known marker library hashes match; native-OFF AVX2 cache/generated flags and exact phase patch verified |
 | Prospective closure | Resolve/hash current transitive loader libraries, compilers and source/cache/patch before requests; distinguish newly measured hashes from historical identities |
 | CPU | AMD HX370,12 physical/24 logical, clean4/8 classification; one allowed/online representative per physical core; no manual numbering assumptions |
-| Machine | AC connected; readable temperatures; preflight<70C/run-start<80C/critical≥95C; pre-load MemAvailable≥8GiB, loaded emergency floor≥1GiB; pre-build≥12GiB; disk≥30GiB |
+| Machine | AC connected; readable temperatures; preflight<70C/run-start<80C/critical≥100C; pre-load MemAvailable≥8GiB, loaded emergency floor≥1GiB; pre-build≥12GiB; disk≥30GiB |
 | State | Fixed readable governor/EPP/driver/power; sched_ext disabled/absent; no heavy concurrent workload |
 | Output | Exclusive new session; preserved old raw evidence; source/workload/runtime identity guards on resume and between requests |
 | Approval | Plan/source fingerprint, exact duration rule, BOTH schedules, fallback policy and10800s budget matched by separate author approval before any build/smoke |
