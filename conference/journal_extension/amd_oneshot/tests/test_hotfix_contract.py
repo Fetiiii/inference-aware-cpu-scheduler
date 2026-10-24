@@ -26,7 +26,8 @@ class HotfixContractTests(unittest.TestCase):
         self.assertEqual(old_science, new_science)
         expected = {**original['safety'], 'min_available_memory_gib': 8,
                     'min_build_available_memory_gib': 12,
-                    'min_runtime_available_memory_gib': 1}
+                    'min_runtime_available_memory_gib': 1,
+                    'critical_temp_c': 100}
         self.assertEqual(current['safety'], expected)
         self.assertNotEqual(digest(current), digest(original))
         for tier, count in [('FULL', 72), ('STATIC_SIGNAL', 48)]:

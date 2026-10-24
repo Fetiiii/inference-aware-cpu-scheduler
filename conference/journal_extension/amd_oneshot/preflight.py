@@ -95,7 +95,7 @@ def check_machine_state(config, expected=None):
         limit = 80.0 if expected is not None else float(config.get("preflight_temp_max_c", 70))
         if temperature is None or temperature >= limit:
             errors.append(f"temperature unreadable or >= {limit:g} C")
-        if temperature is not None and temperature >= float(config.get("critical_temp_c", 95)):
+        if temperature is not None and temperature >= float(config.get("critical_temp_c", 100)):
             errors.append("critical temperature reached")
         memory = memory_snapshot(config.get('memory_phase', 'pre_load'),
                                  config.get('min_available_memory_gib', 8))

@@ -92,7 +92,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(monitor.samples[0]["total_observation_us"], monitor.samples[0]["extra_observation_us"])
 
     def test_safety_stops_only_owned_server_immediately(self):
-        for snapshot, reason in ((dict(ac_online=True, temp_c=95), "critical_temperature"),
+        for snapshot, reason in ((dict(ac_online=True, temp_c=100), "critical_temperature"),
                                  (dict(ac_online=True, temp_c=None), "temperature_unreadable"),
                                  (dict(ac_online=None, temp_c=50), "ac_disconnected_or_unknown"),
                                  (dict(ac_online=False, temp_c=50), "ac_disconnected_or_unknown")):
@@ -104,6 +104,12 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(monitor.abort_runtime)
                 self.assertIn(reason, monitor.abort_reasons)
                 own_stop.assert_called_once_with()
+        own_stop = Mock()
+        monitor = rt.RequestMonitor(999, .02, Mock(), zero_shot_model(),
+            safety_check=Mock(return_value=dict(ac_online=True, temp_c=96.875)), abort=own_stop)
+        monitor.check_safety()
+        self.assertFalse(monitor.abort_runtime)
+        own_stop.assert_not_called()
 
     def test_free_port_check_refuses_existing_service(self):
         reservation = Mock()

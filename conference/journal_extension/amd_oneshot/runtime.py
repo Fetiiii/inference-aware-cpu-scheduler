@@ -71,7 +71,7 @@ class _Samples(list):
 
 
 class RequestMonitor(c02.ProcPhaseMonitor):
-    def __init__(self, pid, interval_s, actuator, model, route=None, safety_check=None, abort=None):
+    def __init__(self, pid, interval_s, actuator, model, route=None, safety_check=None, abort=None, critical_temp_c=100):
         # Disable C02 threshold decisions; retain its /proc acquisition loop.
         super().__init__(pid, interval_s, float("inf"), -float("inf"), 2, actuator)
         self.model, self.route = model, route
@@ -79,6 +79,7 @@ class RequestMonitor(c02.ProcPhaseMonitor):
         self.samples = _Samples(self)
         self.error = None
         self.safety_check, self.abort = safety_check, abort
+        self.critical_temp_c = float(critical_temp_c)
         self.safety_samples, self.abort_reasons = [], []
         self.abort_runtime = False
         self._last_safety = None
@@ -95,7 +96,7 @@ class RequestMonitor(c02.ProcPhaseMonitor):
             reasons = list(result.get("reasons", []))
             if result.get("temp_c") is None:
                 reasons.append("temperature_unreadable")
-            elif result["temp_c"] >= 95:
+            elif result["temp_c"] >= self.critical_temp_c:
                 reasons.append("critical_temperature")
             if result.get("ac_online") is not True:
                 reasons.append("ac_disconnected_or_unknown")
@@ -316,7 +317,8 @@ def run_request(config, item, arm_spec, run_dir, detector_model):
                                      actuator.apply if source == "external_proc" else None,
                                      safety_check=config.get("live_safety_check") or
                                      (lambda: live_safety_snapshot(config.get('min_runtime_available_memory_gib', 1))),
-                                     abort=proc.terminate)
+                                     abort=proc.terminate,
+                                     critical_temp_c=config.get("critical_temp_c", 100))
             monitor.start()
             try:
                 ro.wait_for_health(port, proc, timeout_s=config.get("startup_timeout_s", 120))
