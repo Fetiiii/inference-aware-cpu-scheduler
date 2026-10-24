@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "conference" / "experiments"))
 sys.path.insert(0, str(ROOT / "harness"))
 import c02_external_oracle as c02
 from .calibration import DetectorState
+from .preflight import memory_snapshot
 from conference.tools.c03_amd_preflight import collect_thermal_state
 
 bl, ro, tr = c02.bl, c02.ro, c02.tr
@@ -52,8 +53,8 @@ class _Samples(list):
         if self and sample["cputime_jiffies"] is not None and self[-1]["cputime_jiffies"] is not None:
             delta = sample["cputime_jiffies"] - self[-1]["cputime_jiffies"]
             sample["norm_ctx_per_cpu_s"] = ((sample["ctx_switches"] - self[-1]["ctx_switches"]) * os.sysconf("SC_CLK_TCK") / delta if delta > 0 else 0.)
+        m.check_safety()
         if m.decision_start_ns is not None and sample["t_ns"] >= m.decision_start_ns:
-            m.check_safety()
             # The detector receives exactly these two fields: no markers.
             event = m.detector.feed({key: sample[key] for key in ("t_ns", "norm_ctx_per_cpu_s")})
             if event:
@@ -145,7 +146,7 @@ def affinity_snapshot(pid):
     return {"main_thread": main, "per_thread": threads}
 
 
-def live_safety_snapshot():
+def live_safety_snapshot(floor_gib=1):
     supplies = []
     for path in Path("/sys/class/power_supply").glob("*"):
         try:
@@ -153,7 +154,9 @@ def live_safety_snapshot():
                 supplies.append((path / "online").read_text().strip() == "1")
         except OSError:
             continue
-    return {"temp_c": package_temperature(), "ac_online": any(supplies) if supplies else None}
+    memory = memory_snapshot('runtime', floor_gib)
+    return {"temp_c": package_temperature(), "ac_online": any(supplies) if supplies else None,
+            "memory": memory, "reasons": ['memory_emergency'] if memory['errors'] else []}
 
 
 def reserve_port(requested=None):
@@ -296,6 +299,10 @@ def run_request(config, item, arm_spec, run_dir, detector_model):
     reservation = None
     started = time.monotonic()
     try:
+        # The load floor applies only before this fresh server is started.
+        record['memory_before_load'] = memory_snapshot('pre_load', config.get('min_available_memory_gib', 8))
+        if record['memory_before_load']['errors']:
+            raise RuntimeFailure('insufficient_memory_before_load')
         with log_path.open("xb") as log:
             reservation, port = reserve_port(config.get("port"))
             reservation.close()
@@ -304,6 +311,13 @@ def run_request(config, item, arm_spec, run_dir, detector_model):
             record.update(server_command=command, server_port=port)
             proc = subprocess.Popen(command, stdout=log,
                                     stderr=subprocess.STDOUT, start_new_session=True)
+            actuator = c02.AffinityActuator(proc.pid, spec.get("target_cpus") or [])
+            monitor = RequestMonitor(proc.pid, .020, actuator, detector_model,
+                                     actuator.apply if source == "external_proc" else None,
+                                     safety_check=config.get("live_safety_check") or
+                                     (lambda: live_safety_snapshot(config.get('min_runtime_available_memory_gib', 1))),
+                                     abort=proc.terminate)
+            monitor.start()
             try:
                 ro.wait_for_health(port, proc, timeout_s=config.get("startup_timeout_s", 120))
             except RuntimeError as exc:
@@ -311,6 +325,11 @@ def run_request(config, item, arm_spec, run_dir, detector_model):
                                      retryable=proc.poll() is None) from exc
             timings["startup_s"] = time.monotonic() - started
             timings["startup_readiness_s"] = timings["startup_s"]
+            monitor._last_safety = None
+            monitor.check_safety()
+            record['safety_after_health'] = monitor.safety_samples[-1] if monitor.safety_samples else None
+            if monitor.abort_runtime:
+                raise RuntimeFailure('critical_safety_stop')
             prompt = Path(config["prompt"]).read_text(encoding="utf-8")
             warm_start = time.monotonic()
             warm_sent, warm_text, warm_final = _stream(port, {"prompt": "Warmup.", "n_predict": 1, "temperature": 0,
@@ -325,13 +344,8 @@ def run_request(config, item, arm_spec, run_dir, detector_model):
             record["affinity_start"] = affinity_snapshot(proc.pid)
             if spec["cpus"] is not None and record["affinity_start"]["main_thread"] != sorted(spec["cpus"]):
                 raise RuntimeFailure("initial_server_affinity_mismatch")
-            actuator = c02.AffinityActuator(proc.pid, spec.get("target_cpus") or [])
-            monitor = RequestMonitor(proc.pid, .020, actuator, detector_model,
-                                     actuator.apply if source == "external_proc" else None,
-                                     safety_check=config.get("live_safety_check"), abort=proc.terminate)
             watcher = c02.PhaseMarkWatcher(log_path, offset,
                                           actuator.apply if source == "internal_oracle" else None)
-            monitor.start()
             watcher.start()
             time.sleep(config.get("monitor_preroll_s", .3))
             before, temp_start = bl.sched_snapshot(proc.pid), package_temperature()

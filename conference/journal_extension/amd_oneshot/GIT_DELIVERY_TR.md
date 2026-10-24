@@ -55,11 +55,15 @@ Depo kökünde:
 
 ```bash
 bash conference/journal_extension/amd_oneshot/amd_oneshot.sh locate
-bash conference/journal_extension/amd_oneshot/amd_oneshot.sh preflight
+bash conference/journal_extension/amd_oneshot/amd_oneshot.sh preflight --session results/journal_extension_amd_retry01
 ```
 
 Varsayılan model başka yerdeyse yalnız ikinci komuta `--model /mevcut/model.gguf`
 ekleyin. Eski runtime farklı yerdeyse `--server-bin /mevcut/llama-server` ekleyin.
+`results/journal_extension_amd_01` ve önceki ZIP'ler korunur; yeni commit ile bu
+oturum sürdürülmez, taşınmaz veya üzerine yazılmaz. `retry01` de varsa durun ve
+yazarla kullanılmamış yeni bir yol belirleyin. Bu uyumluluk düzeltmesi sonrası
+preflight/run/package/verify aynı **yeni** oturum yolunu kullanmalıdır.
 Maske veya metodoloji seçmeyin. Locate yalnız aday yolları gösterir; kimlik
 doğrulaması preflight'tadır. Prompt otomatik olarak frozen dosyadan alınır.
 
@@ -71,12 +75,12 @@ Diğer `NOT_READY`/hatalarda durun; üretilen arşivi koruyun, elle alternatif d
 ## 4. Yalnız yeni Git-native yazar onayından sonra
 
 Yazarın commit/source/plan/iki schedule/süre kuralı/fallback politikasına bağlı
-onay JSON'unu `.je_amd_authorization/execution_approval.json` yoluna koyun. Bu
+onay JSON'unu `.je_amd_authorization/hotfix_execution_approval.json` yoluna koyun. Bu
 dizin Git tarafından yok sayılır. Eski ZIP onayını kopyalamak geçersizdir.
 Örnek/template `authorized=false` olup izin değildir; collaborator bunu açmaz.
 
 ```bash
-bash conference/journal_extension/amd_oneshot/amd_oneshot.sh run --confirm --approval .je_amd_authorization/execution_approval.json
+bash conference/journal_extension/amd_oneshot/amd_oneshot.sh run --session results/journal_extension_amd_retry01 --confirm --approval .je_amd_authorization/hotfix_execution_approval.json
 ```
 
 `--confirm` sizin bilinçli rızanızdır; onayın yerine geçmez. Yazarın ayrıca izinli
@@ -85,10 +89,13 @@ Toplam bütçe preflight başlangıcından itibaren10800s'dir. Dört hariç tekn
 sonrası yalnız sürelerden FULL72, STATIC_SIGNAL48 veya STOP dondurulur.600s
 arşiv rezervi ve300s güvenlik payı tahmine dahildir; süre garantisi değildir.
 Bilimsel kapı başarısızsa politika atlanır; kötü/negatif/no-trigger sonuç gizlenmez.
+Eski `execution_approval.json` kopyalanmaz veya yükseltilmez. Yukarıdaki yeni
+onay dosyası ancak hotfix'in tam commit/kaynak/yeni plan hash'leri incelendikten
+sonra ayrıca verilebilir; bu doküman veya false template yürütme izni değildir.
 
 ## 5. Son arşivi seçme, hata/iptal ve geri gönderim
 
-Tüm özel çıktılar `results/journal_extension_amd_01_private_<tür>_<benzersiz-id>.zip`
+Tüm özel çıktılar `results/<oturum-adı>_private_<tür>_<benzersiz-id>.zip`
 adını kullanır; türler farklı durumları belirtir:
 
 | Çıktı | Anlamı / teslim seçimi |
@@ -110,7 +117,7 @@ Dosya silmeyin, onay/plan değiştirmeyin, yeni oturum açıp kötü koşuyu de�
 Araç başarısızlığı da arşivler. Güç kesintisi/SIGKILL sonrası yalnız paketleme:
 
 ```bash
-bash conference/journal_extension/amd_oneshot/amd_oneshot.sh package
+bash conference/journal_extension/amd_oneshot/amd_oneshot.sh package --session results/journal_extension_amd_retry01
 ```
 
 Manuel kurtarmada bu komutun `MANUAL RECOVERY ARCHIVE:` satırındaki TAM yolu
@@ -118,7 +125,7 @@ kullanın. Araç her üretimde **o kesin dosyaya ait** `VERIFY BEFORE DELIVERY:`
 komutunu yazdırır. Göndermeden önce bu komutu aynen çalıştırın; biçimi:
 
 ```bash
-bash conference/journal_extension/amd_oneshot/amd_oneshot.sh verify "TAM_ARSIV_YOLU.zip" --session results/journal_extension_amd_01
+bash conference/journal_extension/amd_oneshot/amd_oneshot.sh verify "TAM_ARSIV_YOLU.zip" --session results/journal_extension_amd_retry01
 ```
 
 `TAM_ARSIV_YOLU.zip` bir örnek yer tutucudur; `FINAL RUN ARCHIVE` veya manuel
@@ -149,3 +156,13 @@ güvenilir yazar iletişimi ve hash doğrulaması gerekir. Public tracked dosyal
 gerçek yürütme izni/secret bulunmaz. Bu dağıtım görevi otomatik izin üretmez.
 Paketleme düzeltmesi de yeni commit/kaynak hash'i üretir; eski onay dosyası
 taşınmaz veya otomatik yükseltilmez. Yeni incelenmiş commit'e yeni onay gerekir.
+
+## Hotfix bellek ve kaynak kapıları
+
+Model yüklenmeden önce en az **8 GiB MemAvailable** gerekir; bildirilen 6,6 GiB
+bu kapıyı geçmez. Normal uygulamaları kullanıcı kapatabilir; araç süreç öldürmez,
+swap'ı kapasite olarak saymaz ve bellek bypass seçeneği sunmaz. Model yüklüyken
+ayrı **1 GiB** acil duruş tabanı kullanılır; 8 GiB yüklenmiş modele tekrar
+uygulanmaz. Offline derlemeden önce **12 GiB**, derleme sırasında da 1 GiB acil
+tabanı gerekir. Bu eşikler tarihsel tepe ölçümü değildir; gerekçeler ve belirsizlik
+`HOTFIX_COMPATIBILITY.md` içindedir. Sıcaklık, AC, disk ve ağır iş kapıları korunur.

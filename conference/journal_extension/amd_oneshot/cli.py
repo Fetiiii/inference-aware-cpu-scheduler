@@ -142,7 +142,10 @@ def do_preflight(args):
             report['runtime_fallback_notice'] = 'All non-runtime checks passed. No build/execution authorized; run requires separately approved fallback policy and a new full preflight.'
         save_json(session / 'preflight.json', report)
         print(f'PREFLIGHT: {report["status"]}\nSESSION: {session}')
-        print('After NEW exact-commit author approval: bash conference/journal_extension/amd_oneshot/amd_oneshot.sh run --confirm --approval .je_amd_authorization/execution_approval.json')
+        print('After NEW exact-commit author approval: ' + shlex.join([
+            'bash', 'conference/journal_extension/amd_oneshot/amd_oneshot.sh',
+            'run', '--session', str(session), '--confirm', '--approval',
+            '.je_amd_authorization/hotfix_execution_approval.json']))
         for error in report['errors']:
             print(f'GATE: {error}')
         return 0 if report['status'] == 'PASS' else 2
@@ -200,6 +203,7 @@ def copy_runtime_diagnostics(session, work_root):
     import shutil
     candidates = [work_root / name for name in ('runtime-fallback-manifest.json', 'runtime-fallback-failure.json')]
     candidates += sorted(work_root.glob('command-*.log'))
+    candidates += sorted(work_root.glob('command-*.memory.json'))
     for source_file in candidates:
         if not source_file.is_file():
             continue
@@ -252,7 +256,9 @@ def prepare_runtime(session, plan, config, approval, report):
         raise ValueError('Runtime fallback is not approved')
     # Read-only machine/model/prompt checks must still pass immediately before
     # compilation. Compilation cannot be used to bypass an interference gate.
-    machine = preflight.check_machine_state(config, report['machine_state'])
+    build_config = {**config, 'memory_phase': 'pre_build',
+                    'min_available_memory_gib': config.get('min_build_available_memory_gib', 12)}
+    machine = preflight.check_machine_state(build_config, report['machine_state'])
     save_json(session / 'runtime_fallback_machine_check.json', machine)
     if machine['status'] != 'PASS':
         raise ValueError('Machine gate failed before fallback build')

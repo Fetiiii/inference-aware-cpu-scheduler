@@ -1,6 +1,7 @@
 """Read-only, fail-closed checks for a new AMD dataset (never runs inference)."""
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -12,6 +13,7 @@ from conference.tools import c03_amd_preflight as c03
 MODEL_SHA256 = "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"
 PROMPT_SHA256 = "27f3f8ba7b73d3df1337549237a8e9f4ccf57e0551908cc93ce8a183480751b8"
 ORIGINAL_SERVER_SHA256 = 'a3d96e1df84b2c56a2c04f8253040fe4c88241c8193640128ff3b539d3cc11e1'
+PHASE_PATCH_SHA256 = '722adc5c8d8805d442753971d2eabd488ab91906aa8fa93961d6a615194833ce'
 POWER_FIELDS = ("scaling_drivers", "governors", "epp", "amd_pstate_status",
                 "amd_pstate_prefcore", "boost", "platform_profile", "powerprofilesctl")
 
@@ -42,6 +44,34 @@ def _processes():
             and not (row["ppid"] == os.getpid() and row["command"] == "ps")][:30]
 
 
+def memory_snapshot(phase='pre_load', floor_gib=8):
+    """Observe physical available memory; swap never increases the headroom."""
+    errors = []
+    try:
+        text = _text('/proc/meminfo') or ''
+    except OSError as exc:
+        text = ''
+        errors.append('memory read failed: ' + str(exc))
+    fields = {}
+    for name in ('MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'):
+        match = re.search(r'^' + name + r':\s+(\d+)\s+kB\s*$', text, re.M)
+        fields[name] = int(match.group(1)) * 1024 if match else None
+    try:
+        floor = float(floor_gib) * 2**30
+        if not math.isfinite(floor) or floor <= 0 or isinstance(floor_gib, bool):
+            raise ValueError('invalid floor')
+    except (TypeError, ValueError, OverflowError):
+        floor = None
+        errors.append('invalid memory floor')
+    if fields['MemAvailable'] is None or (floor is not None and fields['MemAvailable'] < floor):
+        errors.append('insufficient or unreadable available memory')
+    return {'phase': phase, 'floor_gib': floor_gib, 'floor_bytes': floor,
+            'total_memory_bytes': fields['MemTotal'],
+            'available_memory_bytes': fields['MemAvailable'],
+            'swap_total_bytes': fields['SwapTotal'], 'swap_free_bytes': fields['SwapFree'],
+            'errors': errors, 'status': 'NOT_READY' if errors else 'PASS'}
+
+
 def check_machine_state(config, expected=None):
     """Recheck per-request gates; expected is a preceding machine-state report."""
     errors, warnings = [], []
@@ -67,15 +97,14 @@ def check_machine_state(config, expected=None):
             errors.append(f"temperature unreadable or >= {limit:g} C")
         if temperature is not None and temperature >= float(config.get("critical_temp_c", 95)):
             errors.append("critical temperature reached")
-        mem = _text('/proc/meminfo') or ''
-        match = re.search(r'^MemAvailable:\s+(\d+)\s+kB', mem, re.M)
-        available = int(match.group(1)) * 1024 if match else None
+        memory = memory_snapshot(config.get('memory_phase', 'pre_load'),
+                                 config.get('min_available_memory_gib', 8))
+        state['memory'] = memory
+        errors.extend(memory['errors'])
         disk_path = Path(config.get("disk_path", config.get("repo_root", '.')))
         free = shutil.disk_usage(disk_path).free
-        state.update(available_memory_bytes=available, free_disk_bytes=free,
+        state.update(available_memory_bytes=memory['available_memory_bytes'], free_disk_bytes=free,
                      disk_path=str(disk_path.resolve()))
-        if available is None or available < float(config.get("min_available_memory_gib", 12)) * 2**30:
-            errors.append("insufficient or unreadable available memory")
         if free < float(config.get("min_free_disk_gib", 30)) * 2**30:
             errors.append("insufficient free disk")
         sched_path = Path('/sys/kernel/sched_ext/state')
@@ -106,28 +135,48 @@ def check_machine_state(config, expected=None):
 
 
 def _apply_frozen_patch(original, patch):
-    """Reconstruct a single-file historical patch in memory, checking context."""
+    """Apply complete, exact hunks, allowing only a unique +/-3 line offset."""
     lines, output, cursor = original.splitlines(keepends=True), [], 0
     patch_lines = patch.splitlines(keepends=True)
-    i = 0
+    i, hunks = 0, 0
     while i < len(patch_lines):
-        match = re.match(r'@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@', patch_lines[i])
+        match = re.fullmatch(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@[^\r\n]*\n?', patch_lines[i])
         if not match:
+            if hunks or patch_lines[i].startswith('@@') or not patch_lines[i].startswith(
+                    ('diff --git ', 'index ', '--- ', '+++ ')):
+                raise ValueError('malformed frozen patch')
             i += 1
             continue
-        start = int(match.group(1)) - 1
-        if start < cursor:
-            raise ValueError('overlapping frozen patch hunks')
-        output.extend(lines[cursor:start]); cursor = start; i += 1
+        old_count = int(match.group(2)) if match.group(2) is not None else 1
+        new_count = int(match.group(4)) if match.group(4) is not None else 1
+        start = int(match.group(1)) - (1 if old_count else 0)
+        if start < 0 or not old_count:
+            raise ValueError('frozen patch requires original context')
+        before, after = [], []
+        i += 1
         while i < len(patch_lines) and patch_lines[i][:1] in (' ', '+', '-'):
             line = patch_lines[i]; kind, content = line[0], line[1:]
             if kind in (' ', '-'):
-                if cursor >= len(lines) or lines[cursor] != content:
-                    raise ValueError('frozen patch context mismatch')
-                cursor += 1
+                before.append(content)
             if kind in (' ', '+'):
-                output.append(content)
+                after.append(content)
             i += 1
+        if len(before) != old_count or len(after) != new_count:
+            raise ValueError('frozen patch hunk count mismatch')
+        candidates = [pos for pos in range(max(cursor, start - 3),
+                                           min(len(lines) - old_count, start + 3) + 1)
+                      if lines[pos:pos + old_count] == before]
+        if not candidates:
+            raise ValueError('frozen patch context mismatch or overlapping hunks')
+        if len(candidates) != 1:
+            raise ValueError('ambiguous frozen patch context')
+        position = candidates[0]
+        output.extend(lines[cursor:position])
+        output.extend(after)
+        cursor = position + old_count
+        hunks += 1
+    if not hunks:
+        raise ValueError('frozen patch has no hunks')
     output.extend(lines[cursor:])
     return ''.join(output)
 
@@ -235,15 +284,28 @@ def verify_build(config):
     if c03.git_output(['rev-parse', 'HEAD'], cwd=source) != pinned:
         raise ValueError('llama.cpp source revision mismatch')
     patch_path = root / 'conference/diagnostic/llama_cpp_phase_mark.patch'
+    patch_bytes = patch_path.read_bytes()
+    if hashlib.sha256(patch_bytes).hexdigest() != PHASE_PATCH_SHA256:
+        raise ValueError('historical phase patch SHA256 mismatch')
     original = c03.git_output(['show', f'{pinned}:src/llama-context.cpp'], cwd=source) + '\n'
-    reconstructed = _apply_frozen_patch(original, patch_path.read_text())
+    reconstructed = _apply_frozen_patch(original, patch_bytes.decode())
     if c03.MARKER.decode() not in reconstructed:
         raise ValueError('reconstructed source lacks historical PHASE_MARK format')
-    if (source / 'src/llama-context.cpp').read_bytes() != reconstructed.encode():
-        raise ValueError('source differs from reconstructed historical C03 phase patch')
     changed = c03.git_output(['diff', 'HEAD', '--name-only'], cwd=source).splitlines()
-    if changed != ['src/llama-context.cpp']:
+    if changed not in ([], ['src/llama-context.cpp']):
         raise ValueError('source changes exceed the frozen C03 phase patch')
+    if c03.git_output(['ls-files', '--others', '--exclude-standard'], cwd=source):
+        raise ValueError('nonignored untracked source inputs forbidden')
+    context_bytes = (source / 'src/llama-context.cpp').read_bytes()
+    if not changed and context_bytes == original.encode():
+        source_state = 'clean_pinned_base_binary_separately_anchored'
+    elif changed == ['src/llama-context.cpp'] and context_bytes == reconstructed.encode():
+        source_state = 'exact_frozen_phase_patch'
+    else:
+        raise ValueError('source differs from clean pinned base or reconstructed historical C03 phase patch')
+    # This records source state only. Existing binary/library identity checks
+    # below separately anchor the executable; no build equivalence is inferred.
+    reconstructed_sha256 = hashlib.sha256(reconstructed.encode()).hexdigest()
     cache_path = build / 'CMakeCache.txt'; cache = c03.parse_cmake_cache(cache_path)
     if (cache.get('GGML_BACKEND_DL') != 'OFF' or cache.get('GGML_CPU_ALL_VARIANTS') != 'OFF'
             or cache.get('GGML_BACKEND_DIR') != '' or os.environ.get('GGML_BACKEND_PATH')):
@@ -266,6 +328,10 @@ def verify_build(config):
     supplied_historical = config.get('historical_identity')
     if supplied_historical:
         supplied_historical = supplied_historical.get('diagnostic_build', supplied_historical)
+        if supplied_historical.get('llama_cpp_commit', pinned) != pinned:
+            raise ValueError('historical source commit mismatch')
+        if supplied_historical.get('patch_sha256', PHASE_PATCH_SHA256) != PHASE_PATCH_SHA256:
+            raise ValueError('historical phase patch SHA256 mismatch')
         if supplied_historical.get('server_binary', {}).get('sha256') != ORIGINAL_SERVER_SHA256:
             raise ValueError('ORIGINAL_BINARY_MISMATCH: supplied historical anchor differs; author-reviewed fallback required')
     manifest_path = config.get('build_manifest')
@@ -276,6 +342,10 @@ def verify_build(config):
             raise ValueError('existing historical C03 identity metadata or approved build manifest required; neither is available')
         historical = config.get('historical_identity') or json.loads(historical_path.read_text())
         historical = historical.get('diagnostic_build', historical)
+        if historical.get('llama_cpp_commit', pinned) != pinned:
+            raise ValueError('historical source commit mismatch')
+        if historical.get('patch_sha256', PHASE_PATCH_SHA256) != PHASE_PATCH_SHA256:
+            raise ValueError('historical phase patch SHA256 mismatch')
         compiler_identity = historical.get('compiler_identity')
         if (not compiler_identity or
                 (isinstance(compiler_identity, dict) and
@@ -317,6 +387,8 @@ def verify_build(config):
                 'historical_known_identities': {'server_binary': historical['server_binary'],
                                                 'marker_libraries': recorded},
                 'phase_mark': capability, 'source_commit': pinned,
+                'source_state': source_state, 'reconstructed_source_sha256': reconstructed_sha256,
+                'binary_source_equivalence': False,
                 'source_files': {n: identity(source / n) for n in c03.git_output(['ls-files'], cwd=source).splitlines()},
                 'phase_patch': identity(patch_path), 'cmake_cache': identity(cache_path),
                 'historical_compiler_identity': historical.get('compiler_identity'),
@@ -371,7 +443,8 @@ def verify_build(config):
             'cmake_cache': identity(cache_path), 'build_manifest': manifest_id,
             'compiler': identity(compiler), 'compiler_identity': manifest['compiler_identity'],
             'emitted_flags': emitted_flags,
-            'phase_mark': capability, 'source_commit': pinned}
+            'phase_mark': capability, 'source_commit': pinned,
+            'source_state': source_state, 'reconstructed_source_sha256': reconstructed_sha256}
 
 
 def perform_preflight(config, destination):

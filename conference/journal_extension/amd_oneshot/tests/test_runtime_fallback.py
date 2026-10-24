@@ -43,6 +43,7 @@ class RuntimeFallbackTests(unittest.TestCase):
         self.now = 1000.
         self.work = self.root / 'isolated-runtime'
         self.patchers = [patch.object(f.shutil, 'which', return_value=str(self.compiler)),
+                         patch.object(preflight, 'memory_snapshot', return_value={'status': 'PASS', 'errors': [], 'available_memory_bytes': 16 * 2**30}),
                          patch.object(preflight.c03, 'git_output', return_value=f.POLICY['source_revision']),
                          patch.object(preflight, '_runtime_closure', side_effect=self.closure)]
         for item in self.patchers:
@@ -91,6 +92,17 @@ class RuntimeFallbackTests(unittest.TestCase):
         binary = Path(config['server_bin']); binary.write_bytes(b'manual substitution')
         with self.assertRaisesRegex(ValueError, 'CURRENT_IDENTITY_MISMATCH'):
             preflight.verify_build(config)
+
+    def test_build_entry_rechecks_twelve_gib_before_any_command(self):
+        with patch.object(preflight, 'memory_snapshot', return_value={
+                'phase': 'pre_build', 'floor_gib': 12, 'available_memory_bytes': 9 * 2**30,
+                'status': 'NOT_READY', 'errors': ['insufficient or unreadable available memory']}) as snapshot:
+            with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_BUILD_MEMORY'):
+                self.build()
+        snapshot.assert_called_once_with('pre_build', 12)
+        self.assertFalse(self.commands)
+        self.assertTrue((self.work / 'runtime-fallback-failure.json').is_file())
+        self.assertTrue((self.work / 'command-pre-build.memory.json').is_file())
 
     def test_unapproved_policy_or_source_plan_changes_rejected_before_any_command(self):
         for key, value in [('runtime_fallback_authorized', False),

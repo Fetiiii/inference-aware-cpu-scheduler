@@ -64,13 +64,27 @@ def validate_approval(config, approval):
         raise ValueError('RUNTIME_FALLBACK_UNAPPROVED: immutable author approval/source/plan/policy binding required')
 
 
-def _run(command, *, cwd, timeout, log_path, env):
+def _run(command, *, cwd, timeout, log_path, env, memory_floor_gib=1):
     """Bound the entire process group, including descendants on cancellation."""
+    samples = []
     with Path(log_path).open('xb') as output:
         process = subprocess.Popen(command, cwd=cwd, env=env, stdout=output,
                                    stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            code = process.wait(timeout=timeout)
+            deadline = time.monotonic() + timeout
+            while True:
+                snapshot = preflight.memory_snapshot('build_runtime', memory_floor_gib)
+                samples.append({'wall_s': time.time(), **snapshot})
+                if snapshot['errors']:
+                    raise ValueError('RUNTIME_FALLBACK_MEMORY_EMERGENCY')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    code = process.wait(timeout=min(1, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
         except BaseException:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -88,6 +102,8 @@ def _run(command, *, cwd, timeout, log_path, env):
                 except ProcessLookupError:
                     pass
             raise
+        finally:
+            save_json(str(log_path) + '.memory.json', {'samples': samples})
     if code:
         raise ValueError(f'RUNTIME_FALLBACK_BUILD_FAILED: command exit {code}; see {log_path}')
 
@@ -188,7 +204,8 @@ def build_fallback(config, approval, work_root, session_started_wall_s, *, clock
                           'CMAKE_TOOLCHAIN_FILE', 'CC', 'CXX', 'MAKEFLAGS')}
     env['GIT_NO_REPLACE_OBJECTS'] = '1'
     commands = []
-    execute = runner or _run
+    execute = runner or (lambda *args, **kwargs: _run(
+        *args, **kwargs, memory_floor_gib=config.get('min_runtime_available_memory_gib', 1)))
     last_wall, last_mono = started, mono_started
     def remaining_budget():
         nonlocal last_wall, last_mono
@@ -206,6 +223,10 @@ def build_fallback(config, approval, work_root, session_started_wall_s, *, clock
         commands.append({'command': command, 'cwd': str(cwd), 'log': str(log)})
         execute(command, cwd=cwd, timeout=remaining, log_path=log, env=env)
     try:
+        memory = preflight.memory_snapshot('pre_build', config.get('min_build_available_memory_gib', 12))
+        save_json(work / 'command-pre-build.memory.json', memory)
+        if memory['errors']:
+            raise ValueError('RUNTIME_FALLBACK_INSUFFICIENT_BUILD_MEMORY')
         archive = work / 'pinned-source.tar'
         run([tools['git'], 'archive', '--format=tar', '--output=' + str(archive), POLICY['source_revision']], local_source)
         with tarfile.open(archive) as bundle:

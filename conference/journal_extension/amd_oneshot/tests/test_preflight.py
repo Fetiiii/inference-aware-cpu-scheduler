@@ -44,13 +44,16 @@ class PreflightTests(unittest.TestCase):
         (build / 'CMakeCache.txt').write_text(''.join(f'{k}:STRING={v}\n' for k, v in cache.items()))
         (build / 'compile_commands.json').write_text(json.dumps([{'command': 'c++ -mavx2 -c a.cpp'}]))
         stack.enter_context(patch.object(p, 'ORIGINAL_SERVER_SHA256', p.c03.sha256_file(binary)))
+        stack.enter_context(patch.object(p, 'PHASE_PATCH_SHA256', p.c03.sha256_file(phase)))
         stack.enter_context(patch.object(p.c03, 'git_output', side_effect=lambda args, **kw: {
             'rev-parse': p.c03.PINNED_LLAMA_COMMIT, 'show': 'original',
-            'diff': 'src/llama-context.cpp', 'ls-files': 'src/llama-context.cpp'}[args[0]]))
+            'diff': 'src/llama-context.cpp', 'ls-files': '' if '--others' in args else 'src/llama-context.cpp'}[args[0]]))
         stack.enter_context(patch.object(p, '_apply_frozen_patch', return_value=context.read_text()))
         closure = stack.enter_context(patch.object(p, '_runtime_closure',
             side_effect=lambda _: ([p.identity(library)], {'method': 'fixture loader'})))
         config = dict(repo_root=str(root), server_bin=str(binary), historical_identity={
+            'llama_cpp_commit': p.c03.PINNED_LLAMA_COMMIT,
+            'patch_sha256': p.c03.sha256_file(phase),
             'compiler_identity': 'historical compiler capture',
             'server_binary': {'sha256': p.c03.sha256_file(binary)},
             'phase_mark_capability': {'matched_file_identities': [{'sha256': p.c03.sha256_file(library)}]}})
@@ -264,6 +267,7 @@ class PreflightTests(unittest.TestCase):
                     return 'src/llama-context.cpp\nggml/src/ggml.c'
                 self.fail(f'unexpected git call: {args}')
             with patch.object(p.c03, 'git_output', side_effect=fake_git), \
+                 patch.object(p, 'PHASE_PATCH_SHA256', p.c03.sha256_file(frozen_patch)), \
                  patch.object(p, '_apply_frozen_patch', return_value=context.read_text()):
                 with self.assertRaisesRegex(ValueError, 'source changes exceed'):
                     p.verify_build({'repo_root': directory, 'server_bin': root / 'build/bin/llama-server'})
@@ -351,8 +355,9 @@ class PreflightTests(unittest.TestCase):
             def fake_git(args, cwd=None):
                 return {'rev-parse': p.c03.PINNED_LLAMA_COMMIT, 'show': 'original',
                         'diff': 'src/llama-context.cpp',
-                        'ls-files': 'CMakeLists.txt\nsrc/llama-context.cpp'}[args[0]]
+                        'ls-files': '' if '--others' in args else 'CMakeLists.txt\nsrc/llama-context.cpp'}[args[0]]
             with patch.object(p.c03, 'git_output', side_effect=fake_git), \
+                 patch.object(p, 'PHASE_PATCH_SHA256', p.c03.sha256_file(patch_path)), \
                  patch.object(p, '_apply_frozen_patch', return_value=context.read_text()), \
                  patch.object(p, 'ORIGINAL_SERVER_SHA256', p.c03.sha256_file(binary)), \
                  patch.object(p, '_runtime_closure', side_effect=lambda _: ([p.identity(library)], {'method': 'fixture'})), \

@@ -11,6 +11,12 @@ from conference.journal_extension.amd_oneshot.calibration import zero_shot_model
 
 
 class RuntimeTests(unittest.TestCase):
+    def setUp(self):
+        memory = patch.object(rt, 'memory_snapshot', return_value={
+            'status': 'PASS', 'errors': [], 'available_memory_bytes': 16 * 2**30})
+        memory.start()
+        self.addCleanup(memory.stop)
+
     def spec(self, source="none"):
         return dict(cpus=None if source == "none" else [2, 9, 21, 44],
                     target_cpus=[9, 44], threads=4, threads_batch=4, phase_source=source)
