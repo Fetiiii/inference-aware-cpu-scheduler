@@ -5,13 +5,15 @@
 **SELECTED C03 PATH: `CROSS_VENDOR`**
 
 The target is an AMD Ryzen AI 9 HX 370 with 12 physical cores and 24 logical
-CPUs. C03 changes one generality axis: CPU vendor/platform. The smoke contains
-only `BIG_ONLY` and `ALL_CORES`, two randomized rounds, and four measured
-requests. It does not add stock, external/oracle scheduling, intermediate
-splits, contention, sched_ext, or a second model-family axis.
+CPUs. C03 changes one generality axis: CPU vendor/platform. The authorized
+sequence began with a two-round, four-request smoke and, after review, extended
+to a completed six-round full pilot with 12 valid measured requests (n=6 per
+arm). It contains only `BIG_ONLY` and `ALL_CORES`; it does not add stock,
+external/oracle scheduling, intermediate splits, contention, sched_ext, or a
+second model-family axis.
 
-No six-round command is provided or authorized. Review the four-run output
-with ChatGPT before any extension and do not start C04.
+No additional run is authorized by this runbook. Review the completed pilot
+before any new experiment and do not start C04.
 
 ## Collaborator quick start
 
@@ -52,13 +54,22 @@ Only after it prints `PRECHECK STATUS: PASS`:
 ```
 
 The smoke automatically runs the analyzer and prints the collaborator handoff.
+
+After the smoke output has been reviewed and explicit continuation is approved,
+the 6-round pilot extends the plan while selecting only absolute rounds 3–6, preserving
+completed smoke rounds 1–2:
+
+```bash
+./conference/tools/c03_cross_vendor.sh pilot
+```
+
 Analysis can also be regenerated without inference:
 
 ```bash
 ./conference/tools/c03_cross_vendor.sh analyze
 ```
 
-Smoke consumes the model path and hashes persisted by preflight; it does not
+Smoke and pilot consume the model path and hashes persisted by preflight; they do not
 accept a replacement.
 
 ## Diagnostic build provenance
@@ -84,7 +95,9 @@ That instrumentation is now frozen in
 in `conference/diagnostic/PHASE_MARK.md`. The AMD machine builds from the same
 pinned source plus that patch. Do not copy the Intel-built executable.
 
-The build helper explicitly preserves the historical CMake policy:
+### Historical Intel C01/C02 build record
+
+The frozen historical Intel diagnostic build policy was:
 
 ```text
 CMAKE_BUILD_TYPE=Release
@@ -95,9 +108,37 @@ GGML_OPENMP_ENABLED=ON
 LLAMA_BUILD_SERVER=ON
 ```
 
-`GGML_NATIVE=ON` is retained because it was the frozen historical build policy;
-the actual AMD compiler and build identity are recorded. Missing dependencies
-are reported but never installed automatically.
+This historical C01/C02 record is preserved as written; it was not an
+AVX2-constrained build.
+
+### C03 AMD protocol amendment
+
+The official AMD HX 370 C03 pilot intentionally used the build helper's
+AVX2-constrained diagnostic configuration:
+
+```text
+CMAKE_BUILD_TYPE=Release
+BUILD_SHARED_LIBS=ON
+GGML_NATIVE=OFF
+GGML_AVX=ON
+GGML_AVX2=ON
+GGML_FMA=ON
+GGML_F16C=ON
+GGML_AVX512=OFF
+GGML_AVX512_VBMI=OFF
+GGML_AVX512_VNNI=OFF
+GGML_AVX512_BF16=OFF
+GGML_OPENMP=ON
+GGML_OPENMP_ENABLED=ON
+LLAMA_BUILD_SERVER=ON
+```
+
+This protocol amendment uses an AVX2-constrained build to reduce AMD-only
+AVX-512 vector-width capability as an additional cross-vendor confound. It is
+only a reduction of one vector-width difference: it does not make the two
+architectures equivalent or isolate core topology. The AMD AVX2 full pilot
+remains the official C03 dataset. Missing dependencies are reported but never
+installed automatically.
 
 Preflight verifies the exact marker format in the executable or its sibling
 shared libraries. The semantic ground truth remains the first measured-request
@@ -225,6 +266,12 @@ output directory. Send back the complete directory:
 ```text
 results/conference_c03/
 ```
+
+The PR contains derived CSV/Markdown output and preflight metadata, but it does
+not track the raw detector, phase, or server logs. The complete
+collaborator-side `results/conference_c03/` directory, including those raw logs,
+must be archived separately before the final paper evidence freeze. Do not
+reconstruct or invent absent raw artifacts.
 
 The analyzer reports observations only. It does not automatically claim that
 placement behavior, signal separation, or the frozen threshold generalizes.

@@ -38,6 +38,7 @@ import run_once as ro  # noqa: E402
 ARMS = ("BIG_ONLY", "ALL_CORES")
 PATHS = ("CROSS_VENDOR", "FALLBACK_MODEL")
 SMOKE_ROUNDS = 2
+FULL_PILOT_ROUNDS = 6
 DEFAULT_ORDER_SEED = 3304
 FROZEN_INTERVAL_MS = 20.0
 FROZEN_HI = 3000.0
@@ -197,6 +198,30 @@ def run_stem(item):
     )
 
 
+def schedule_from_round(plan, start_round):
+    return [
+        item for item in plan["schedule"]
+        if item["round"] >= start_round
+    ]
+
+
+def validate_completed_prefix(outdir, schedule, start_round):
+    if start_round <= 1:
+        return
+    root = Path(outdir)
+    expected = [item for item in schedule if item["round"] < start_round]
+    missing = [
+        item for item in expected
+        if not (root / "raw" / "runs" / f"{run_stem(item)}.json").exists()
+    ]
+    if missing:
+        missing_desc = ", ".join(run_stem(item) for item in missing)
+        raise RuntimeError(
+            f"continuation from round {start_round} requires complete earlier rounds; "
+            f"missing: {missing_desc}"
+        )
+
+
 def ensure_plan(outdir, args, topology, specs):
     path = Path(outdir) / "raw" / "plan.json"
     proposed = {
@@ -213,12 +238,36 @@ def ensure_plan(outdir, args, topology, specs):
     }
     if path.exists():
         existing = json.loads(path.read_text(encoding="utf-8"))
-        if existing != proposed:
+        same_protocol = (
+            existing.get("task") == proposed["task"]
+            and existing.get("selected_c03_path") == proposed["selected_c03_path"]
+            and existing.get("order_seed") == proposed["order_seed"]
+            and existing.get("arms") == proposed["arms"]
+            and existing.get("topology") == proposed["topology"]
+            and existing.get("arm_configs") == proposed["arm_configs"]
+            and existing.get("detector") == proposed["detector"]
+        )
+        existing_schedule = existing.get("schedule", [])
+        prefix_matches = (
+            existing_schedule == proposed["schedule"][:len(existing_schedule)]
+        )
+        if not same_protocol or not prefix_matches:
             raise RuntimeError(
-                f"existing {path} does not exactly match this frozen C03 smoke"
+                f"existing {path} does not match requested protocol"
             )
-        return existing
-    c01.atomic_json(path, proposed)
+        if existing.get("rounds", 0) > args.rounds:
+            raise RuntimeError(
+                f"existing {path} already contains more rounds than "
+                "requested; do not shrink a persisted experiment plan"
+            )
+        if existing.get("rounds", 0) < args.rounds:
+            # Explicitly approved full pilot extends the reviewed smoke;
+            # all existing round entries remain byte-for-byte identical.
+            c01.atomic_json(path, proposed)
+        else:
+            proposed = existing
+    else:
+        c01.atomic_json(path, proposed)
     return proposed
 
 
@@ -693,6 +742,14 @@ def parse_args(argv=None):
     parser.add_argument("--fallback-model-family", default="")
     parser.add_argument("--outdir", default=str(ROOT / "results" / "conference_c03"))
     parser.add_argument("--rounds", type=int, default=SMOKE_ROUNDS)
+    parser.add_argument(
+        "--start-round", type=int, default=1,
+        help="first absolute round to execute; --rounds remains total count",
+    )
+    parser.add_argument(
+        "--full-pilot-approved", action="store_true",
+        help="required for six rounds after explicit smoke checkpoint approval",
+    )
     parser.add_argument("--order-seed", type=int, default=DEFAULT_ORDER_SEED)
     parser.add_argument(
         "--detector-mode", choices=("zero_shot", "recalibrated"),
@@ -715,8 +772,19 @@ def parse_args(argv=None):
     parser.add_argument("--skip-model-hash", action="store_true")
     args = parser.parse_args(argv)
 
-    if args.rounds != SMOKE_ROUNDS:
-        parser.error("C03 first checkpoint permits only --rounds 2")
+    if args.rounds not in (SMOKE_ROUNDS, FULL_PILOT_ROUNDS):
+        parser.error(
+            f"--rounds must be {SMOKE_ROUNDS} (smoke) or {FULL_PILOT_ROUNDS} (approved full pilot)"
+        )
+    if args.rounds == FULL_PILOT_ROUNDS and not args.full_pilot_approved:
+        parser.error(
+            "six-round C03 pilot requires explicit checkpoint approval and "
+            "--full-pilot-approved"
+        )
+    if args.start_round < 1 or args.start_round > args.rounds:
+        parser.error("--start-round must be between 1 and --rounds")
+    if args.start_round > 1 and not args.resume:
+        parser.error("continuation with --start-round requires --resume")
     try:
         args.path = validate_selected_path(args.path, args.fallback_model_family)
         args.detector_config = validate_detector_config(
@@ -752,12 +820,13 @@ def main(argv=None):
     specs = arm_specs(args.topology, args.threads_big, args.threads_all)
     environment = environment_record(args, args.topology, specs, preflight)
     plan = ensure_plan(args.outdir, args, args.topology, specs)
+    validate_completed_prefix(args.outdir, plan["schedule"], args.start_round)
     environment_file = register_environment(args.outdir, environment)
     if args.initial_cooldown:
         print(f"[C03] initial cooldown {args.initial_cooldown}s", flush=True)
         time.sleep(args.initial_cooldown)
     completed = failures = 0
-    for item in plan["schedule"]:
+    for item in schedule_from_round(plan, args.start_round):
         stem = run_stem(item)
         run_path = Path(args.outdir) / "raw" / "runs" / f"{stem}.json"
         if run_path.exists():
